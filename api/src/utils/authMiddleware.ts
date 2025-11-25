@@ -1,11 +1,21 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { JWTPayload } from './auth'
 
-// Extend FastifyRequest to include user
-declare module 'fastify' {
-  interface FastifyRequest {
-    user?: JWTPayload
+// Extend Fastify JWT types to properly type the payload
+declare module '@fastify/jwt' {
+  interface FastifyJWT {
+    payload: JWTPayload
   }
+}
+
+// Type helper for accessing the authenticated user from request
+type AuthenticatedRequest = FastifyRequest & {
+  user?: JWTPayload
+}
+
+// Helper function to safely get user from request
+function getUser(request: FastifyRequest): JWTPayload | undefined {
+  return (request as AuthenticatedRequest).user
 }
 
 export async function authenticateUser(
@@ -41,8 +51,8 @@ export async function authenticateUser(
     
     try {
       const decoded = await request.jwtVerify<JWTPayload>()
-      // Attach user info to request
-      request.user = decoded
+      // Attach user info to request (jwtVerify already sets request.user, but we ensure it's typed)
+      ;(request as AuthenticatedRequest).user = decoded
     } finally {
       // Restore original authorization header
       request.headers.authorization = originalToken || undefined
@@ -60,7 +70,8 @@ export async function authenticateUser(
 
 export function requireRole(...roles: string[]) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    if (!request.user) {
+    const user = getUser(request)
+    if (!user) {
       return reply.code(401).send({
         error: {
           code: 'UNAUTHORIZED',
@@ -70,7 +81,7 @@ export function requireRole(...roles: string[]) {
       })
     }
 
-    if (!roles.includes(request.user.role)) {
+    if (!roles.includes(user.role)) {
       return reply.code(403).send({
         error: {
           code: 'FORBIDDEN',

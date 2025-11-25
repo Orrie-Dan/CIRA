@@ -1,11 +1,10 @@
 services:
   - type: web
     name: cira-api
-    env: node
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     region: oregon
     plan: starter
-    buildCommand: pnpm install && pnpm prisma:generate && pnpm build
-    startCommand: pnpm prisma:deploy && pnpm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -24,7 +23,7 @@ services:
         value: info
     disk:
       name: cira-uploads
-      mountPath: /opt/render/project/src/uploads
+      mountPath: /app/uploads
       sizeGB: 1
 
 databases:

@@ -50,8 +50,3 @@ temp/
 
 # Lock files (optional - some teams prefer to commit these)
 # pnpm-lock.yaml
-
-# Docker files (for local development only)
-Dockerfile
-docker-compose.yml
-.dockerignore
