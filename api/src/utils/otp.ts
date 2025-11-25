@@ -1,4 +1,4 @@
-import { prisma } from '../prisma'
+import { prisma } from '../prisma.js'
 
 // In-memory OTP store (use Redis in production)
 const otpStore = new Map<string, { code: string; expiresAt: number; userId?: string; purpose: 'verification' | 'password_reset' }>()

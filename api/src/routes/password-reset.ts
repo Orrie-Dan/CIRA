@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../prisma'
-import { ApiError } from '../utils/errors'
-import { hashPassword } from '../utils/auth'
+import { prisma } from '../prisma.js'
+import { ApiError } from '../utils/errors.js'
+import { hashPassword } from '../utils/auth.js'
 
 // In a real implementation, you would use a proper OTP service
 // For now, we'll use a simple in-memory store (use Redis in production)

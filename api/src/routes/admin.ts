@@ -1,14 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../prisma'
-import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas'
-import { ApiError } from '../utils/errors'
-import { hashPassword } from '../utils/auth'
-import { authenticateUser } from '../utils/authMiddleware'
-import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications'
-import { sendPushNotificationsToUsers } from '../utils/pushNotifications'
-import { broadcastNotificationToUser } from './notifications'
-import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger'
+import { prisma } from '../prisma.js'
+import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas.js'
+import { ApiError } from '../utils/errors.js'
+import { hashPassword } from '../utils/auth.js'
+import { authenticateUser } from '../utils/authMiddleware.js'
+import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
+import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
+import { broadcastNotificationToUser } from './notifications.js'
+import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 
 export async function adminRoutes(app: FastifyInstance) {
   // Get detailed report with all history, comments, and assignments

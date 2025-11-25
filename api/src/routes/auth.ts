@@ -1,24 +1,24 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../prisma'
-import { registerSchema, loginSchema } from '../schemas'
-import { ApiError } from '../utils/errors'
-import { hashPassword, verifyPassword, JWTPayload } from '../utils/auth'
-import { authenticateUser } from '../utils/authMiddleware'
-import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger'
+import { prisma } from '../prisma.js'
+import { registerSchema, loginSchema } from '../schemas.js'
+import { ApiError } from '../utils/errors.js'
+import { hashPassword, verifyPassword, JWTPayload } from '../utils/auth.js'
+import { authenticateUser } from '../utils/authMiddleware.js'
+import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import {
   verifyGoogleToken,
   verifyAppleToken,
   findOrCreateOAuthUser,
-} from '../utils/oauth'
+} from '../utils/oauth.js'
 import {
   generateOTP,
   storeOTP,
   verifyOTP,
   cleanupExpiredOTPs,
-} from '../utils/otp'
-import { sendOTPViaEmail } from '../utils/email'
-import { sendOTPViaSMS } from '../utils/sms'
+} from '../utils/otp.js'
+import { sendOTPViaEmail } from '../utils/email.js'
+import { sendOTPViaSMS } from '../utils/sms.js'
 import path from 'path'
 import fs from 'fs/promises'
 import { fileURLToPath } from 'url'

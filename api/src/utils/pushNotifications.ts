@@ -1,4 +1,4 @@
-import { prisma } from '../prisma'
+import { prisma } from '../prisma.js'
 
 const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send'
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { prisma } from '../prisma'
-import { ApiError } from '../utils/errors'
+import { prisma } from '../prisma.js'
+import { ApiError } from '../utils/errors.js'
 import path from 'path'
 import fs from 'fs/promises'
 import { fileURLToPath } from 'url'

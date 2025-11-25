@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
-import { getSectorsByDistrict } from '../data/rwanda-sectors'
+import { getSectorsByDistrict } from '../data/rwanda-sectors.js'
 
 const reverseGeocodeQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),

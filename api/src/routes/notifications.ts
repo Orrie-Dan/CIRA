@@ -1,17 +1,17 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../prisma'
+import { prisma } from '../prisma.js'
 import {
   getUserNotifications,
   getUnreadCount,
   markAsRead,
   markAllAsRead,
-} from '../utils/notifications'
-import { registerDeviceToken, unregisterDeviceToken } from '../utils/pushNotifications'
-import { ApiError } from '../utils/errors'
-import { authenticateUser } from '../utils/authMiddleware'
-import { zodToJsonSchemaFastify } from '../utils/swagger'
-import type { JWTPayload } from '../utils/auth'
+} from '../utils/notifications.js'
+import { registerDeviceToken, unregisterDeviceToken } from '../utils/pushNotifications.js'
+import { ApiError } from '../utils/errors.js'
+import { authenticateUser } from '../utils/authMiddleware.js'
+import { zodToJsonSchemaFastify } from '../utils/swagger.js'
+import type { JWTPayload } from '../utils/auth.js'
 
 // Store SSE connections per user
 const sseConnections = new Map<string, Set<{ send: (data: string) => void; close: () => void }>>()

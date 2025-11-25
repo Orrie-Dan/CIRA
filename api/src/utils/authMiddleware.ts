@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { JWTPayload } from './auth'
+import { JWTPayload } from './auth.js'
 
 // Extend Fastify JWT types to properly type the payload
 declare module '@fastify/jwt' {

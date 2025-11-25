@@ -7,8 +7,8 @@ import multipart from '@fastify/multipart'
 import staticFiles from '@fastify/static'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
-import { reportsRoutes } from './routes/reports'
-import { errorHandler, ApiError } from './utils/errors'
+import { reportsRoutes } from './routes/reports.js'
+import { errorHandler, ApiError } from './utils/errors.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -169,22 +169,22 @@ app.get('/health', {
 })
 
 // Routes
-const { authRoutes } = await import('./routes/auth')
+const { authRoutes } = await import('./routes/auth.js')
 await app.register(authRoutes)
 await app.register(reportsRoutes)
-const { adminRoutes } = await import('./routes/admin')
+const { adminRoutes } = await import('./routes/admin.js')
 await app.register(adminRoutes)
-const { geocodingRoutes } = await import('./routes/geocoding')
+const { geocodingRoutes } = await import('./routes/geocoding.js')
 await app.register(geocodingRoutes)
-const { photosRoutes } = await import('./routes/photos')
+const { photosRoutes } = await import('./routes/photos.js')
 await app.register(photosRoutes)
-const { notificationsRoutes } = await import('./routes/notifications')
+const { notificationsRoutes } = await import('./routes/notifications.js')
 await app.register(notificationsRoutes)
-const { passwordResetRoutes } = await import('./routes/password-reset')
+const { passwordResetRoutes } = await import('./routes/password-reset.js')
 await app.register(passwordResetRoutes)
-const { qcSlipRoutes } = await import('./routes/qc-slip')
+const { qcSlipRoutes } = await import('./routes/qc-slip.js')
 await app.register(qcSlipRoutes)
-const { analyticsRoutes } = await import('./routes/analytics')
+const { analyticsRoutes } = await import('./routes/analytics.js')
 await app.register(analyticsRoutes)
 
 // Start server

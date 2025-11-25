@@ -1,10 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../prisma'
-import { ApiError } from '../utils/errors'
-import { authenticateUser, requireRole } from '../utils/authMiddleware'
-import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger'
-import { zodToJsonSchemaFastify } from '../utils/swagger'
+import { prisma } from '../prisma.js'
+import { ApiError } from '../utils/errors.js'
+import { authenticateUser, requireRole } from '../utils/authMiddleware.js'
+import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
+import { zodToJsonSchemaFastify } from '../utils/swagger.js'
 
 const createQcSlipSchema = z.object({
   reportId: z.string().uuid(),

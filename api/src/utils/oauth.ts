@@ -1,4 +1,4 @@
-import { prisma } from '../prisma'
+import { prisma } from '../prisma.js'
 import type { FastifyInstance } from 'fastify'
 
 export interface GoogleUserInfo {
