@@ -78,6 +78,8 @@ export async function photosRoutes(app: FastifyInstance) {
       // Upload to Cloudinary
       let uploadResult
       try {
+        app.log.info({ reportId, bufferSize: buffer.length }, 'Starting Cloudinary upload')
+        
         uploadResult = await uploadToCloudinary(buffer, `reports/${reportId}`, {
           resource_type: 'image',
           transformation: [
@@ -85,6 +87,7 @@ export async function photosRoutes(app: FastifyInstance) {
             { fetch_format: 'auto' },
           ],
         })
+        
         app.log.info({ reportId, publicId: uploadResult.public_id }, 'Cloudinary upload successful')
       } catch (cloudinaryError: any) {
         app.log.error({ 
@@ -92,7 +95,20 @@ export async function photosRoutes(app: FastifyInstance) {
           reportId,
           message: cloudinaryError?.message,
           httpCode: cloudinaryError?.http_code,
+          stack: cloudinaryError?.stack,
         }, 'Cloudinary upload failed')
+        
+        // Check if it's a timeout
+        if (cloudinaryError?.message?.includes('timeout')) {
+          return reply.code(504).send({
+            error: {
+              code: 'UPLOAD_TIMEOUT',
+              message: 'Photo upload timed out. Please try again with a smaller image.',
+              requestId: req.id,
+            },
+          })
+        }
+        
         return reply.code(500).send({
           error: {
             code: 'CLOUDINARY_UPLOAD_FAILED',

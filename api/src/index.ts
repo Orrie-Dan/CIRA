@@ -32,6 +32,8 @@ const app = Fastify({
   requestIdHeader: 'x-request-id',
   requestIdLogLabel: 'requestId',
   genReqId: () => crypto.randomUUID(),
+  requestTimeout: 120000, // 120 seconds for file uploads
+  bodyLimit: 10 * 1024 * 1024, // 10MB body limit
 })
 
 // JWT
