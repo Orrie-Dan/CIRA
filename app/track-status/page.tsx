@@ -1,153 +1,139 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ReportDetailView } from '@/components/report-detail-view'
-import { Search, AlertCircle } from 'lucide-react'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { apiGetReport } from '@/lib/api'
-
-// Get API base URL (same pattern as lib/api.ts)
-const getApiBase = () => {
-  return process.env.NEXT_PUBLIC_API_BASE_URL || 'https://cira-backend-1.onrender.com'
-}
+import { FileSearch, AlertCircle } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
 
 export default function TrackStatusPage() {
-  const [reportId, setReportId] = useState('')
-  const [searchId, setSearchId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const [reportId, setReportId] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  const handleSearch = async () => {
-    setError(null)
-    const trimmedId = reportId.trim()
+  useEffect(() => {
+    // Pre-fill from query parameter
+    const idParam = searchParams.get('id')
+    if (idParam) {
+      setReportId(idParam)
+    }
+  }, [searchParams])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     
-    if (!trimmedId) {
-      setError('Please enter a report ID')
+    if (!reportId.trim()) {
+      toast({
+        title: 'Error',
+        description: 'Please enter a Report ID',
+        variant: 'destructive',
+      })
       return
     }
 
-    // Validate UUID format (basic check)
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    const shortIdPattern = /^[0-9a-f]{8}$/i
-    
-    if (uuidPattern.test(trimmedId)) {
-      // Full UUID provided - verify it exists
-      setLoading(true)
-      try {
-        await apiGetReport(trimmedId)
-        setSearchId(trimmedId)
-      } catch (err: any) {
-        setError(err.message || 'Report not found. Please check your report ID.')
-      } finally {
-        setLoading(false)
-      }
-    } else if (shortIdPattern.test(trimmedId)) {
-      // Short ID provided - try to search by short ID
-      setLoading(true)
-      try {
-        const API_BASE = getApiBase()
-        const res = await fetch(`${API_BASE}/reports/search/${trimmedId}`)
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: 'Report not found' } }))
-          throw new Error(err.error?.message || 'Report not found')
-        }
-        const report = await res.json()
-        setSearchId(report.id)
-      } catch (err: any) {
-        setError(err.message || 'Report not found. Please check your report ID.')
-      } finally {
-        setLoading(false)
-      }
-    } else {
-      setError('Invalid report ID format. Please enter a valid report ID (8 characters or full UUID).')
-    }
-  }
+    const trimmedId = reportId.trim().toLowerCase()
+    let fullReportId = trimmedId
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSearch()
+    // Check if it's a short code (8 characters without dashes)
+    if (trimmedId.length === 8 && !trimmedId.includes('-')) {
+      // Try to find the full UUID from localStorage
+      const storedMapping = localStorage.getItem(`report_${trimmedId.toUpperCase()}`)
+      if (storedMapping) {
+        fullReportId = storedMapping
+      } else {
+        // If not found in localStorage, show error
+        toast({
+          title: 'Report Not Found',
+          description: 'Could not find a report with this short code. Please enter your full Report ID.',
+          variant: 'destructive',
+        })
+        return
+      }
+    } else if (trimmedId.length === 36 && trimmedId.includes('-')) {
+      // It's a full UUID, use it directly
+      fullReportId = trimmedId
+    } else {
+      toast({
+        title: 'Invalid Format',
+        description: 'Please enter either an 8-character short code or the full Report ID',
+        variant: 'destructive',
+      })
+      return
     }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(fullReportId)) {
+      toast({
+        title: 'Invalid Report ID',
+        description: 'The Report ID format is invalid. Please check and try again.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Redirect to report detail page
+    router.push(`/report/${fullReportId}`)
   }
 
   return (
-    <div className="min-h-screen bg-background py-8 px-4">
-      <div className="container mx-auto max-w-4xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Track Report Status</h1>
-          <p className="text-muted-foreground">
-            Enter your report ID to view the current status and updates
-          </p>
-        </div>
-
-        {!searchId ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Enter Report ID</CardTitle>
-              <CardDescription>
-                You can find your report ID in the confirmation message after submitting a report.
-                You can enter either the short ID (8 characters like <code className="bg-muted px-1 rounded">a1b2c3d4</code>) or the full UUID.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
+    <div className="min-h-screen bg-background py-12 px-4">
+      <div className="container mx-auto max-w-2xl">
+        <Card>
+          <CardHeader className="text-center">
+            <div className="flex justify-center mb-4">
+              <div className="rounded-full bg-primary/10 p-3">
+                <FileSearch className="h-8 w-8 text-primary" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl">Track Report Status</CardTitle>
+            <CardDescription>
+              Enter your Report ID to view the current status and updates
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="reportId" className="text-sm font-medium">
+                  Report ID
+                </label>
                 <Input
-                  placeholder="Enter your report ID (e.g., a1b2c3d4 or full UUID)"
+                  id="reportId"
+                  type="text"
+                  placeholder="Enter 8-character code or full Report ID"
                   value={reportId}
                   onChange={(e) => setReportId(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-1"
+                  className="font-mono"
                   disabled={loading}
                 />
-                <Button onClick={handleSearch} disabled={loading}>
-                  <Search className="h-4 w-4 mr-2" />
-                  {loading ? 'Searching...' : 'Search'}
-                </Button>
+                <p className="text-xs text-muted-foreground">
+                  You can use either the 8-character short code or the full Report ID you received when submitting your report.
+                </p>
               </div>
-              
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
 
-              <div className="text-sm text-muted-foreground space-y-2">
-                <p><strong>Don't have your report ID?</strong></p>
-                <ul className="list-disc list-inside space-y-1 ml-4">
-                  <li>Check your email confirmation (if you were logged in)</li>
-                  <li>Look for the confirmation message after submitting your report</li>
-                  <li>The report ID is shown in the success message (first 8 characters)</li>
-                </ul>
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p className="font-medium">Where to find your Report ID:</p>
+                    <ul className="list-disc list-inside space-y-1 ml-2">
+                      <li>Check the confirmation message after submitting your report</li>
+                      <li>Look for an 8-character code (e.g., A1B2C3D4) or the full ID</li>
+                      <li>The short code is easier to remember and share</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            <Button 
-              variant="outline" 
-              onClick={() => {
-                setSearchId(null)
-                setReportId('')
-                setError(null)
-              }}
-            >
-              ← Search Another Report
-            </Button>
-            <ReportDetailView 
-              reportId={searchId}
-              userRole="citizen"
-              onClose={() => {
-                setSearchId(null)
-                setReportId('')
-              }}
-            />
-          </div>
-        )}
+
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? 'Loading...' : 'Track Report'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

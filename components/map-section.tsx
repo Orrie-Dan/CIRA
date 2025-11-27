@@ -3,10 +3,10 @@
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
-import { MapPin, Eye } from "lucide-react"
+import { MapPin, Eye, Copy, Check } from "lucide-react"
 import { useState, useEffect, useMemo, useCallback } from "react"
 import dynamic from "next/dynamic"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { ReportForm, type ReportFormValues } from "@/components/report-form"
 import type { Map as LeafletMap } from "leaflet"
 import { toast } from "@/hooks/use-toast"
@@ -130,6 +130,10 @@ export function MapSection() {
   const [showReportForm, setShowReportForm] = useState(false)
   const [pendingLatLng, setPendingLatLng] = useState<[number, number] | null>(null)
   const [leafletMap, setLeafletMap] = useState<LeafletMap | null>(null)
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false)
+  const [submittedReportId, setSubmittedReportId] = useState<string | null>(null)
+  const [copiedShort, setCopiedShort] = useState(false)
+  const [copiedFull, setCopiedFull] = useState(false)
 
   const getMarkerColor = useCallback((type: string) => {
     switch (type) {
@@ -260,15 +264,13 @@ export function MapSection() {
         total: prev.total + 1,
       }))
 
-      // Helper function to get short ID from UUID (first 8 characters)
-      const getShortId = (uuid: string) => uuid.split('-')[0]
+      // Store short code mapping in localStorage for tracking
+      const shortCode = report.id.substring(0, 8).toUpperCase()
+      localStorage.setItem(`report_${shortCode}`, report.id)
 
-      toast({
-        title: 'Report Submitted Successfully!',
-        description: `Your report ID is: ${getShortId(report.id)}. Save this to track your report status.`,
-        duration: 10000, // Show for 10 seconds
-      })
-
+      // Show success dialog with report ID
+      setSubmittedReportId(report.id)
+      setShowSuccessDialog(true)
       setShowReportForm(false)
       setPendingLatLng(null)
     } catch (error: any) {
@@ -470,6 +472,91 @@ export function MapSection() {
                   onCancel={() => setShowReportForm(false)}
                 />
               </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Success Dialog with Report ID */}
+          <Dialog open={showSuccessDialog} onOpenChange={setShowSuccessDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Report Submitted Successfully!</DialogTitle>
+                <DialogDescription>
+                  Your report has been submitted. Please save your Report ID to track its status.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Report ID (Short Code)</label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 px-3 py-2 bg-muted rounded-md font-mono text-sm">
+                      {submittedReportId ? submittedReportId.substring(0, 8).toUpperCase() : ''}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={async () => {
+                        if (submittedReportId) {
+                          const shortId = submittedReportId.substring(0, 8).toUpperCase()
+                          try {
+                            await navigator.clipboard.writeText(shortId)
+                            setCopiedShort(true)
+                            setTimeout(() => setCopiedShort(false), 2000)
+                          } catch (err) {
+                            console.error('Failed to copy:', err)
+                          }
+                        }
+                      }}
+                    >
+                      {copiedShort ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Use this code to track your report status
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Full Report ID</label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 px-3 py-2 bg-muted rounded-md font-mono text-xs break-all">
+                      {submittedReportId || ''}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={async () => {
+                        if (submittedReportId) {
+                          try {
+                            await navigator.clipboard.writeText(submittedReportId)
+                            setCopiedFull(true)
+                            setTimeout(() => setCopiedFull(false), 2000)
+                          } catch (err) {
+                            console.error('Failed to copy:', err)
+                          }
+                        }
+                      }}
+                    >
+                      {copiedFull ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => {
+                    setShowSuccessDialog(false)
+                    if (submittedReportId) {
+                      window.location.href = `/track-status?id=${submittedReportId.substring(0, 8).toUpperCase()}`
+                    }
+                  }}
+                >
+                  Track Status
+                </Button>
+                <Button variant="outline" onClick={() => setShowSuccessDialog(false)}>
+                  Close
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>

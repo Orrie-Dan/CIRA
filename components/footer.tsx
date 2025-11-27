@@ -29,9 +29,9 @@ export function Footer() {
                 </a>
               </li>
               <li>
-                <a href="#" className="hover:text-primary-foreground transition-colors">
+                <Link href="/report" className="hover:text-primary-foreground transition-colors">
                   Report an Issue
-                </a>
+                </Link>
               </li>
               <li>
                 <Link href="/track-status" className="hover:text-primary-foreground transition-colors">
