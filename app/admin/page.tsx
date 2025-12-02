@@ -573,7 +573,7 @@ export default function AdminDashboard() {
       .slice(0, 10) // Top 10 sectors
   }, [reports, filterProvince, filterDistrict])
 
-  // Debug: Log data availability
+  // Debug: Log data availability - only depend on reports to prevent infinite loops
   useEffect(() => {
     if (reports.length > 0) {
       console.log('Dashboard Statistics:', stats)
@@ -602,7 +602,7 @@ export default function AdminDashboard() {
       console.log('District data for chart:', districtData)
       console.log('Sector data for chart:', sectorData)
     }
-  }, [reports, stats, provinceData, districtData, sectorData])
+  }, [reports]) // Only depend on reports - computed values are memoized and will be logged when reports change
 
   // Reset to first page when filters change
   useEffect(() => {
@@ -776,55 +776,57 @@ export default function AdminDashboard() {
     return days
   })()
 
-  // Filter reports based on all filters
-  const filteredReports = reports.filter(report => {
-    if (filterProvince && report.province?.trim() !== filterProvince) return false
-    if (filterDistrict && report.district?.trim() !== filterDistrict) return false
-    if (filterSector && report.sector?.trim() !== filterSector) return false
-    if (filterStatus && report.status !== filterStatus) return false
-    if (filterType && report.type !== filterType) return false
-    if (filterSeverity && report.severity !== filterSeverity) return false
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      if (!report.title.toLowerCase().includes(query) && 
-          !report.description.toLowerCase().includes(query)) {
-        return false
+  // Filter reports based on all filters - MEMOIZED to prevent infinite re-renders
+  const filteredReports = useMemo(() => {
+    return reports.filter(report => {
+      if (filterProvince && report.province?.trim() !== filterProvince) return false
+      if (filterDistrict && report.district?.trim() !== filterDistrict) return false
+      if (filterSector && report.sector?.trim() !== filterSector) return false
+      if (filterStatus && report.status !== filterStatus) return false
+      if (filterType && report.type !== filterType) return false
+      if (filterSeverity && report.severity !== filterSeverity) return false
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase()
+        if (!report.title.toLowerCase().includes(query) && 
+            !report.description.toLowerCase().includes(query)) {
+          return false
+        }
       }
-    }
-    // Advanced search: Reporter
-    if (searchReporter) {
-      const query = searchReporter.toLowerCase()
-      if (!report.reporter?.email?.toLowerCase().includes(query) &&
-          !report.reporter?.fullName?.toLowerCase().includes(query)) {
-        return false
+      // Advanced search: Reporter
+      if (searchReporter) {
+        const query = searchReporter.toLowerCase()
+        if (!report.reporter?.email?.toLowerCase().includes(query) &&
+            !report.reporter?.fullName?.toLowerCase().includes(query)) {
+          return false
+        }
       }
-    }
-    // Advanced search: Assignee
-    if (searchAssignee) {
-      const query = searchAssignee.toLowerCase()
-      const assigneeEmail = report.currentAssignment?.assignee?.email?.toLowerCase() || ''
-      const assigneeName = report.currentAssignment?.assignee?.fullName?.toLowerCase() || ''
-      const orgName = report.currentAssignment?.organization?.name?.toLowerCase() || ''
-      if (!assigneeEmail.includes(query) && !assigneeName.includes(query) && !orgName.includes(query)) {
-        return false
+      // Advanced search: Assignee
+      if (searchAssignee) {
+        const query = searchAssignee.toLowerCase()
+        const assigneeEmail = report.currentAssignment?.assignee?.email?.toLowerCase() || ''
+        const assigneeName = report.currentAssignment?.assignee?.fullName?.toLowerCase() || ''
+        const orgName = report.currentAssignment?.organization?.name?.toLowerCase() || ''
+        if (!assigneeEmail.includes(query) && !assigneeName.includes(query) && !orgName.includes(query)) {
+          return false
+        }
       }
-    }
-    // Date range filter
-    if (dateRange.from || dateRange.to) {
-      const reportDate = new Date(report.createdAt)
-      if (dateRange.from) {
-        const fromDate = new Date(dateRange.from)
-        fromDate.setHours(0, 0, 0, 0)
-        if (reportDate < fromDate) return false
+      // Date range filter
+      if (dateRange.from || dateRange.to) {
+        const reportDate = new Date(report.createdAt)
+        if (dateRange.from) {
+          const fromDate = new Date(dateRange.from)
+          fromDate.setHours(0, 0, 0, 0)
+          if (reportDate < fromDate) return false
+        }
+        if (dateRange.to) {
+          const toDate = new Date(dateRange.to)
+          toDate.setHours(23, 59, 59, 999)
+          if (reportDate > toDate) return false
+        }
       }
-      if (dateRange.to) {
-        const toDate = new Date(dateRange.to)
-        toDate.setHours(23, 59, 59, 999)
-        if (reportDate > toDate) return false
-      }
-    }
-    return true
-  })
+      return true
+    })
+  }, [reports, filterProvince, filterDistrict, filterSector, filterStatus, filterType, filterSeverity, searchQuery, searchReporter, searchAssignee, dateRange])
 
   // Calculate map bounds from filtered reports
   const mapCenterAndBounds = useMemo(() => {
