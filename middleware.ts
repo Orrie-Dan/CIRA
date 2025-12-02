@@ -9,19 +9,10 @@ export function middleware(request: NextRequest) {
   const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route))
   
   if (isProtectedRoute) {
-    // Check for auth token in cookies
-    const token = request.cookies.get('token')
-    
-    if (!token) {
-      // Redirect to login if no token
-      const loginUrl = new URL('/login', request.url)
-      loginUrl.searchParams.set('redirect', pathname)
-      return NextResponse.redirect(loginUrl)
-    }
-    
-    // Token exists, allow request to proceed
-    // Note: We can't verify the token here without making an API call,
-    // but we'll let the page handle role-based checks
+    // Since we're using localStorage for tokens (cross-domain setup),
+    // we can't check authentication in middleware (server-side can't access localStorage).
+    // The client-side pages already handle authentication checks and redirects properly.
+    // Allow the request to proceed and let the page component handle auth validation.
     return NextResponse.next()
   }
   
