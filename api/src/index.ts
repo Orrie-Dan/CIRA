@@ -38,12 +38,12 @@ const app = Fastify({
 
 // JWT
 await app.register(jwt, {
-  secret: process.env.JWT_SECRET || 'your-secret-key-change-in-production',
+  secret: process.env.JWT_SECRET ||,
 })
 
 // Cookie
 await app.register(cookie, {
-  secret: process.env.COOKIE_SECRET || 'your-cookie-secret-change-in-production',
+  secret: process.env.COOKIE_SECRET || ,
 })
 
 // Swagger/OpenAPI Documentation
@@ -108,12 +108,10 @@ await app.register(cors, {
       return
     }
     
-    // In production, use allowed origins
-    // Normalize origins by removing trailing slashes
     const allowed = (process.env.CORS_ORIGIN?.split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean)) || [
       'https://cira-frontend-nu.vercel.app',
     ]
-    // Normalize incoming origin by removing trailing slash for comparison
+
     const normalizedOrigin = origin?.replace(/\/$/, '') || ''
     if (!origin || allowed.includes(normalizedOrigin)) {
       cb(null, true)
@@ -130,12 +128,6 @@ await app.register(multipart, {
     fileSize: 5 * 1024 * 1024, // 5MB
   },
 })
-
-// Static file serving removed - using Cloudinary for image storage
-// await app.register(staticFiles, {
-//   root: path.join(__dirname, '../uploads'),
-//   prefix: '/uploads/',
-// })
 
 // Error handler
 app.setErrorHandler((error, request, reply) => {
