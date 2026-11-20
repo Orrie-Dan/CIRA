@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow, assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { userRepository } from '../repositories/index.js'
@@ -7,24 +8,15 @@ import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
 import { authenticateUser, staffAuth, adminAuth, requireAuthenticatedUser } from '../utils/authMiddleware.js'
 import { changeReportStatus, applyStatusChange, notifyStatusChange, staffReportVisibilityFilter, TRIAGE_QUEUE_STATUSES } from '../services/reportStatusService.js'
-import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
-import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
-import { broadcastNotificationToUser } from './notifications.js'
+import { getReportNotificationRecipients } from '../utils/notifications.js'
+import { enqueueNotification } from '../services/notificationDispatcher.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 
 export async function adminRoutes(app: FastifyInstance) {
   // Get detailed report with all history, comments, and assignments
   app.get('/admin/reports/:id', staffAuth, async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     const user = requireAuthenticatedUser(req)
     // Officers only see the triage queue and reports assigned to them; anything
@@ -173,45 +165,34 @@ export async function adminRoutes(app: FastifyInstance) {
   // List reports with admin filters
   app.get('/admin/reports', staffAuth, async (req: FastifyRequest, reply) => {
     app.log.info({ query: req.query }, 'Admin reports query:')
-    const parsed = adminListReportsQuerySchema.safeParse(req.query)
-    if (!parsed.success) {
-      app.log.warn({ error: parsed.error.flatten() }, 'Validation failed:')
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid query parameters',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(adminListReportsQuerySchema, req.query, 'Invalid query parameters')
 
     try {
       const where: any = {}
       
-      if (parsed.data.bbox) {
-        const [minLon, minLat, maxLon, maxLat] = parsed.data.bbox.split(',').map(Number)
+      if (input.bbox) {
+        const [minLon, minLat, maxLon, maxLat] = input.bbox.split(',').map(Number)
         where.latitude = { gte: minLat, lte: maxLat }
         where.longitude = { gte: minLon, lte: maxLon }
       }
 
-      if (parsed.data.status) {
-        where.status = parsed.data.status
+      if (input.status) {
+        where.status = input.status
       }
 
-      if (parsed.data.type) {
-        where.type = parsed.data.type
+      if (input.type) {
+        where.type = input.type
       }
 
-      if (parsed.data.severity) {
-        where.severity = parsed.data.severity
+      if (input.severity) {
+        where.severity = input.severity
       }
 
-      if (parsed.data.assigneeId || parsed.data.organizationId) {
+      if (input.assigneeId || input.organizationId) {
         where.assignments = {
           some: {
-            ...(parsed.data.assigneeId && { assigneeId: parsed.data.assigneeId }),
-            ...(parsed.data.organizationId && { organizationId: parsed.data.organizationId }),
+            ...(input.assigneeId && { assigneeId: input.assigneeId }),
+            ...(input.organizationId && { organizationId: input.organizationId }),
           },
         }
       }
@@ -226,8 +207,8 @@ export async function adminRoutes(app: FastifyInstance) {
       const [reports, total] = await Promise.all([
         prisma.report.findMany({
           where,
-          take: parsed.data.limit,
-          skip: parsed.data.offset,
+          take: input.limit,
+          skip: input.offset,
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
@@ -307,8 +288,8 @@ export async function adminRoutes(app: FastifyInstance) {
         })),
         meta: {
           total,
-          limit: parsed.data.limit,
-          offset: parsed.data.offset,
+          limit: input.limit,
+          offset: input.offset,
         },
       })
     } catch (error) {
@@ -323,15 +304,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const { id } = req.params
     app.log.info({ id, body: req.body }, 'Assign request:')
     
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     // Clean the body - remove undefined values and empty strings
     const cleanedBody: any = {}
@@ -350,20 +323,9 @@ export async function adminRoutes(app: FastifyInstance) {
 
     app.log.info('Cleaned body:', cleanedBody)
 
-    const parsed = assignReportSchema.extend({ reportId: z.string().uuid() }).omit({ reportId: true }).safeParse(cleanedBody)
-    if (!parsed.success) {
-      app.log.warn({ error: parsed.error.flatten() }, 'Validation failed:')
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(assignReportSchema.extend({ reportId: z.string().uuid() }).omit({ reportId: true }), cleanedBody)
 
-    if (!parsed.data.assigneeId && !parsed.data.organizationId) {
+    if (!input.assigneeId && !input.organizationId) {
       return reply.code(400).send({
         error: {
           code: 'VALIDATION_ERROR',
@@ -398,9 +360,9 @@ export async function adminRoutes(app: FastifyInstance) {
         const created = await tx.reportAssignment.create({
           data: {
             reportId: id,
-            assigneeId: parsed.data.assigneeId,
-            organizationId: parsed.data.organizationId,
-            dueAt: parsed.data.dueAt ? new Date(parsed.data.dueAt) : undefined,
+            assigneeId: input.assigneeId,
+            organizationId: input.organizationId,
+            dueAt: input.dueAt ? new Date(input.dueAt) : undefined,
           },
           include: {
             assignee: {
@@ -433,51 +395,31 @@ export async function adminRoutes(app: FastifyInstance) {
         resourceId: assignment.id,
         details: { 
           reportId: id, 
-          assigneeId: parsed.data.assigneeId,
-          organizationId: parsed.data.organizationId,
+          assigneeId: input.assigneeId,
+          organizationId: input.organizationId,
         },
       })
 
       const reportWithTitle = { title: report.title }
 
-      // Notify assigned officer about assignment
+      // Notify the assigned officer (after the response).
       if (assignment.assigneeId) {
-        try {
-          await notifyUsers(
-            [assignment.assigneeId],
-            'report_assigned',
-            'Report Assigned to You',
-            `Report "${reportWithTitle?.title || 'Untitled'}" has been assigned to you`,
-            {
-              reportId: id,
-              reportTitle: reportWithTitle?.title,
-              assigneeId: assignment.assigneeId,
-              organizationId: assignment.organizationId || undefined,
-            }
-          )
-
-          // Send push notification
-          await sendPushNotificationsToUsers(
-            [assignment.assigneeId],
-            'Report Assigned to You',
-            `"${reportWithTitle?.title || 'Untitled'}"`,
-            { reportId: id, type: 'report_assigned' }
-          )
-
-          // Broadcast via SSE
-          broadcastNotificationToUser(assignment.assigneeId, {
-            type: 'report_assigned',
-            title: 'Report Assigned to You',
-            body: `Report "${reportWithTitle?.title || 'Untitled'}" has been assigned to you`,
-            data: {
-              reportId: id,
-              reportTitle: reportWithTitle?.title,
-              assigneeId: assignment.assigneeId,
-            },
-          })
-        } catch (notifError) {
-          app.log.error(notifError, 'Failed to send notification for assignment')
-        }
+        enqueueNotification({
+          recipients: [assignment.assigneeId],
+          type: 'report_assigned',
+          title: 'Report Assigned to You',
+          body: `Report "${reportWithTitle.title || 'Untitled'}" has been assigned to you`,
+          data: {
+            reportId: id,
+            reportTitle: reportWithTitle.title,
+            assigneeId: assignment.assigneeId,
+            organizationId: assignment.organizationId || undefined,
+          },
+          push: {
+            body: `"${reportWithTitle.title || 'Untitled'}"`,
+            data: { reportId: id, type: 'report_assigned' },
+          },
+        }, app.log)
       }
 
       return reply.code(201).send({
@@ -498,36 +440,22 @@ export async function adminRoutes(app: FastifyInstance) {
   // Add comment to report
   app.post('/admin/reports/:id/comments', staffAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
-    const parsed = addCommentSchema.extend({ reportId: z.string().uuid() }).omit({ reportId: true }).safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(addCommentSchema.extend({ reportId: z.string().uuid() }).omit({ reportId: true }), req.body)
+
+    // The author is always the signed-in staff member, never a body field.
+    const user = requireAuthenticatedUser(req)
+    // Officers may only comment on reports they can see (same rule as the detail view).
+    const visibility = staffReportVisibilityFilter({ userId: user.userId, role: user.role })
 
     try {
-      // Verify report exists
-      const report = await prisma.report.findUnique({
-        where: { id },
-        select: { id: true },
+      const reportForComment = await prisma.report.findFirst({
+        where: visibility ? { AND: [{ id }, visibility] } : { id },
+        select: { id: true, title: true },
       })
 
-      if (!report) {
+      if (!reportForComment) {
         return reply.code(404).send({
           error: {
             code: 'NOT_FOUND',
@@ -537,17 +465,11 @@ export async function adminRoutes(app: FastifyInstance) {
         })
       }
 
-      // Get report details for notification
-      const reportForComment = await prisma.report.findUnique({
-        where: { id },
-        select: { title: true },
-      })
-
       const comment = await prisma.reportComment.create({
         data: {
           reportId: id,
-          body: parsed.data.body,
-          authorId: parsed.data.authorId,
+          body: input.body,
+          authorId: user.userId,
         },
         include: {
           author: {
@@ -558,57 +480,24 @@ export async function adminRoutes(app: FastifyInstance) {
 
       // Log audit event
       await logAuditEvent({
-        userId: parsed.data.authorId || undefined,
+        userId: user.userId,
         action: AuditActions.REPORT_COMMENT_ADDED,
         resourceType: ResourceTypes.COMMENT,
         resourceId: comment.id,
         details: { reportId: id },
       })
 
-      // Notify reporter and assigned officer about comment
-      try {
-        const recipients = await getReportNotificationRecipients(id)
-        // Don't notify the comment author
-        const filteredRecipients = recipients.filter((userId) => userId !== parsed.data.authorId)
-        
-        if (filteredRecipients.length > 0) {
-          await notifyUsers(
-            filteredRecipients,
-            'report_commented',
-            'New Comment on Report',
-            `${comment.author?.fullName || comment.author?.email || 'Someone'} commented on "${reportForComment?.title || 'Untitled'}"`,
-            {
-              reportId: id,
-              reportTitle: reportForComment?.title,
-              commentId: comment.id,
-            }
-          )
-
-          // Send push notifications
-          await sendPushNotificationsToUsers(
-            filteredRecipients,
-            'New Comment on Report',
-            `${comment.author?.fullName || 'Someone'} commented on "${reportForComment?.title || 'Untitled'}"`,
-            { reportId: id, type: 'report_commented', commentId: comment.id }
-          )
-
-          // Broadcast via SSE
-          filteredRecipients.forEach((userId) => {
-            broadcastNotificationToUser(userId, {
-              type: 'report_commented',
-              title: 'New Comment on Report',
-              body: `${comment.author?.fullName || 'Someone'} commented on "${reportForComment?.title || 'Untitled'}"`,
-              data: {
-                reportId: id,
-                reportTitle: reportForComment?.title,
-                commentId: comment.id,
-              },
-            })
-          })
-        }
-      } catch (notifError) {
-        app.log.error(notifError, 'Failed to send notification for comment')
-      }
+      // Notify reporter and assigned officer about the comment (after the response).
+      const commenterName = comment.author?.fullName || comment.author?.email || 'Someone'
+      enqueueNotification({
+        recipients: () => getReportNotificationRecipients(id),
+        excludeUserId: user.userId,
+        type: 'report_commented',
+        title: 'New Comment on Report',
+        body: `${commenterName} commented on "${reportForComment?.title || 'Untitled'}"`,
+        data: { reportId: id, reportTitle: reportForComment?.title, commentId: comment.id },
+        push: { data: { reportId: id, type: 'report_commented', commentId: comment.id } },
+      }, app.log)
 
       return reply.code(201).send({
         id: comment.id,
@@ -626,40 +515,22 @@ export async function adminRoutes(app: FastifyInstance) {
   // rules and officer ownership are enforced by the status service.
   app.patch('/admin/reports/:id/status', staffAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     // Unknown keys (including a legacy client-sent changedBy) are stripped and ignored.
-    const parsed = updateReportStatusSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(updateReportStatusSchema, req.body)
 
     const user = requireAuthenticatedUser(req)
 
     try {
       const { report } = await changeReportStatus({
         reportId: id,
-        toStatus: parsed.data.status,
-        note: parsed.data.note,
+        toStatus: input.status,
+        note: input.note,
         actor: { userId: user.userId, role: user.role },
       })
 
-      await notifyStatusChange(report, report.status, app.log)
+      notifyStatusChange(report, report.status, app.log)
 
       return reply.send({
         id: report.id,
@@ -727,22 +598,11 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post('/admin/users', adminAuth, async (req: FastifyRequest, reply) => {
     app.log.info({ body: req.body }, 'Creating user with data:')
     
-    const parsed = createUserSchema.safeParse(req.body)
-    if (!parsed.success) {
-      app.log.warn({ error: parsed.error.flatten() }, 'Validation failed:')
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(createUserSchema, req.body)
 
     try {
       // Check if user with email already exists
-      const existing = await userRepository.findByEmail(parsed.data.email)
+      const existing = await userRepository.findByEmail(input.email)
 
       if (existing) {
         return reply.code(409).send({
@@ -755,7 +615,7 @@ export async function adminRoutes(app: FastifyInstance) {
       }
 
       // Hash password
-      const passwordHash = await hashPassword(parsed.data.password)
+      const passwordHash = await hashPassword(input.password)
 
       // Prepare data - convert empty strings to null
       const userData: {
@@ -766,11 +626,11 @@ export async function adminRoutes(app: FastifyInstance) {
         role: string
         emailVerified: boolean
       } = {
-        email: parsed.data.email,
+        email: input.email,
         passwordHash,
-        fullName: (parsed.data.fullName && parsed.data.fullName.trim().length > 0) ? parsed.data.fullName.trim() : null,
-        phone: (parsed.data.phone && parsed.data.phone.trim().length > 0) ? parsed.data.phone.trim() : null,
-        role: parsed.data.role || 'officer',
+        fullName: (input.fullName && input.fullName.trim().length > 0) ? input.fullName.trim() : null,
+        phone: (input.phone && input.phone.trim().length > 0) ? input.phone.trim() : null,
+        role: input.role || 'officer',
         // Admin-provisioned accounts are vouched for; password login requires this.
         emailVerified: true,
       }
@@ -819,17 +679,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // Update user password
   app.put('/admin/users/:userId/password', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
-    const parsed = updatePasswordSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(updatePasswordSchema, req.body)
 
     try {
       const { userId } = req.params as { userId: string }
@@ -873,7 +723,7 @@ export async function adminRoutes(app: FastifyInstance) {
       }
 
       // Hash new password
-      const passwordHash = await hashPassword(parsed.data.password)
+      const passwordHash = await hashPassword(input.password)
 
       // Update password and revoke the user's existing sessions
       await prisma.userAccount.update({

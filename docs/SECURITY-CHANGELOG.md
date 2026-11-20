@@ -1,5 +1,24 @@
 # Security Changelog
 
+## Phase 3: API and web
+
+### Staff comments
+- Fixed: `POST /admin/reports/:id/comments` took `authorId` from the request body, so staff could post comments as anyone (and, since clients never sent it, real staff comments had no author). The author and the audit entry now come from the session; a body `authorId` is ignored.
+- Officers can only comment on reports they can see (triage queue + their assignments), the same rule as `GET /admin/reports/:id`; others get 404.
+
+### Notifications
+- In-app, push and SSE notifications are sent after the response by an in-process dispatcher, so slow or failing push delivery no longer delays or fails requests. Delivery is best-effort (as before); on SIGTERM/SIGINT the server stops accepting requests and finishes queued notifications before exiting.
+- Push: one device-token query per notification and Expo requests batched at 100 messages with a 10 s timeout (was one query + one unbounded request per recipient).
+- The citizen comment notification now also goes out over SSE, like the other notification types.
+
+### Geocoding (Nominatim)
+- Requests to Nominatim are serialized and spaced at least 1 s apart, per its usage policy (reverse geocoding used to fire 3 requests 100 ms apart), with an 8 s timeout.
+- Results are cached (Redis when configured, otherwise a bounded in-memory LRU of 5,000 entries): reverse lookups for 7 days per ~11 m cell, forward lookups for 24 h (1 h for no results). Failures are not cached.
+- `/geocoding/reverse` and `/geocoding/forward` are rate limited to 60 requests per minute per client IP.
+
+### Validation
+- Route validation uses shared `parseOrThrow` / `assertUuid` helpers (`api/src/utils/validation.ts`). The error envelope is unchanged: `{ error: { code, message, details?, requestId } }`.
+
 ## Phase 2: report status integrity and staff visibility
 
 ### Who changed a status

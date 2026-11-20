@@ -1,14 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow, assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { createReportSchema, updateReportStatusSchema, listReportsQuerySchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { limits } from '../utils/rateLimit.js'
 import { zodToJsonSchemaFastify } from '../utils/swagger.js'
-import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
-import { getOfficersAndAdmins } from '../utils/notifications.js'
-import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
-import { broadcastNotificationToUser } from './notifications.js'
+import { getReportNotificationRecipients, getOfficersAndAdmins } from '../utils/notifications.js'
+import { enqueueNotification } from '../services/notificationDispatcher.js'
 import { authenticateUser, optionalAuthenticate, getAuthenticatedUser, requireAuthenticatedUser, reportMutationAuth } from '../utils/authMiddleware.js'
 import { changeReportStatus, notifyStatusChange } from '../services/reportStatusService.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
@@ -70,34 +69,23 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest, reply) => {
     app.log.info({ body: req.body }, 'Creating report with data:')
-    const parsed = createReportSchema.safeParse(req.body)
-    if (!parsed.success) {
-      app.log.warn({ error: parsed.error.flatten() }, 'Validation failed:')
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(createReportSchema, req.body)
 
     try {
       const authenticatedUser = getAuthenticatedUser(req)
       const reporterId = authenticatedUser?.userId
 
       const report = await createReportWithHistory({
-        title: parsed.data.title,
-        description: parsed.data.description,
-        type: parsed.data.type,
-        severity: parsed.data.severity,
-        latitude: parsed.data.latitude,
-        longitude: parsed.data.longitude,
-        addressText: parsed.data.addressText,
-        province: parsed.data.province,
-        district: parsed.data.district,
-        sector: parsed.data.sector,
+        title: input.title,
+        description: input.description,
+        type: input.type,
+        severity: input.severity,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        addressText: input.addressText,
+        province: input.province,
+        district: input.district,
+        sector: input.sector,
         reporterId,
       })
 
@@ -110,45 +98,15 @@ export async function reportsRoutes(app: FastifyInstance) {
         details: { type: report.type, severity: report.severity },
       })
 
-      // Notify officers and admins about new report
-      try {
-        const officersAndAdmins = await getOfficersAndAdmins()
-        const userIds = officersAndAdmins.map((u) => u.id)
-        
-        if (userIds.length > 0) {
-          await notifyUsers(
-            userIds,
-            'report_created',
-            'New Report Created',
-            `A new ${report.type} report has been created: ${report.title}`,
-            {
-              reportId: report.id,
-              reportTitle: report.title,
-            }
-          )
-
-          // Send push notifications
-          await sendPushNotificationsToUsers(
-            userIds,
-            'New Report Created',
-            `${report.title}`,
-            { reportId: report.id, type: 'report_created' }
-          )
-
-          // Broadcast via SSE
-          userIds.forEach((userId) => {
-            broadcastNotificationToUser(userId, {
-              type: 'report_created',
-              title: 'New Report Created',
-              body: `A new ${report.type} report has been created: ${report.title}`,
-              data: { reportId: report.id, reportTitle: report.title },
-            })
-          })
-        }
-      } catch (notifError) {
-        app.log.error(notifError, 'Failed to send notifications for new report')
-        // Don't fail the request if notifications fail
-      }
+      // Notify officers and admins about the new report (after the response).
+      enqueueNotification({
+        recipients: async () => (await getOfficersAndAdmins()).map((u) => u.id),
+        type: 'report_created',
+        title: 'New Report Created',
+        body: `A new ${report.type} report has been created: ${report.title}`,
+        data: { reportId: report.id, reportTitle: report.title },
+        push: { body: report.title, data: { reportId: report.id, type: 'report_created' } },
+      }, app.log)
 
       return reply.code(201).send({
         id: report.id,
@@ -252,34 +210,24 @@ export async function reportsRoutes(app: FastifyInstance) {
       },
     },
   }, async (req: FastifyRequest, reply) => {
-    const parsed = listReportsQuerySchema.safeParse(req.query)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid query parameters',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(listReportsQuerySchema, req.query, 'Invalid query parameters')
 
     try {
       const where: any = {}
       
       // Bounding box filter
-      if (parsed.data.bbox) {
-        const [minLon, minLat, maxLon, maxLat] = parsed.data.bbox.split(',').map(Number)
+      if (input.bbox) {
+        const [minLon, minLat, maxLon, maxLat] = input.bbox.split(',').map(Number)
         where.latitude = { gte: minLat, lte: maxLat }
         where.longitude = { gte: minLon, lte: maxLon }
       }
 
-      if (parsed.data.status) {
-        where.status = parsed.data.status
+      if (input.status) {
+        where.status = input.status
       }
 
-      if (parsed.data.type) {
-        where.type = parsed.data.type
+      if (input.type) {
+        where.type = input.type
       }
 
       // "My Reports": only the caller's own reports. Without a valid session this
@@ -300,16 +248,16 @@ export async function reportsRoutes(app: FastifyInstance) {
         skip: number
         cursor?: { id: string }
         orderBy: typeof orderBy
-      } = parsed.data.cursor
+      } = input.cursor
         ? {
-            take: parsed.data.limit,
-            cursor: { id: parsed.data.cursor },
+            take: input.limit,
+            cursor: { id: input.cursor },
             skip: 1,
             orderBy,
           }
         : {
-            take: parsed.data.limit,
-            skip: parsed.data.offset,
+            take: input.limit,
+            skip: input.offset,
             orderBy,
           }
 
@@ -388,10 +336,10 @@ export async function reportsRoutes(app: FastifyInstance) {
         }),
           meta: {
             total,
-            limit: parsed.data.limit,
-            offset: parsed.data.offset,
+            limit: input.limit,
+            offset: input.offset,
             nextCursor:
-              reports.length === parsed.data.limit
+              reports.length === input.limit
                 ? reports[reports.length - 1]?.id
                 : null,
           },
@@ -496,15 +444,7 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     try {
       const report = await prisma.report.findUnique({
@@ -644,39 +584,21 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
-    const parsed = updateReportStatusSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(updateReportStatusSchema, req.body)
 
     const user = requireAuthenticatedUser(req)
 
     try {
       const { report } = await changeReportStatus({
         reportId: id,
-        toStatus: parsed.data.status,
-        note: parsed.data.note,
+        toStatus: input.status,
+        note: input.note,
         actor: { userId: user.userId, role: user.role },
       })
 
-      await notifyStatusChange(report, report.status, app.log)
+      notifyStatusChange(report, report.status, app.log)
 
       return reply.send({
         id: report.id,
@@ -703,15 +625,7 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest<{ Params: { id: string }; Body: { body: string } }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     const parsed = z.object({
       body: z.string().min(1).max(2000),
@@ -770,37 +684,20 @@ export async function reportsRoutes(app: FastifyInstance) {
         details: { reportId: id },
       })
 
-      // Notify reporter and assigned officers about comment
-      try {
-        const recipients = await getReportNotificationRecipients(id)
-        
-        // Remove the comment author from recipients
-        const filteredRecipients = recipients.filter((rId) => rId !== userId)
-        
-        if (filteredRecipients.length > 0) {
-          await notifyUsers(
-            filteredRecipients,
-            'report_commented',
-            'New Comment on Report',
-            `A new comment was added to report "${report.title}"`,
-            {
-              reportId: id,
-              reportTitle: report.title,
-              commentId: comment.id,
-            }
-          )
-
-          await sendPushNotificationsToUsers(
-            filteredRecipients,
-            'New Comment',
-            `New comment on "${report.title}"`,
-            { reportId: id, type: 'report_comment', commentId: comment.id }
-          )
-        }
-      } catch (notifError) {
-        app.log.error(notifError, 'Failed to send notifications for comment')
-        // Don't fail the request if notifications fail
-      }
+      // Notify reporter and assigned officer about the comment (after the response).
+      enqueueNotification({
+        recipients: () => getReportNotificationRecipients(id),
+        excludeUserId: userId,
+        type: 'report_commented',
+        title: 'New Comment on Report',
+        body: `A new comment was added to report "${report.title}"`,
+        data: { reportId: id, reportTitle: report.title, commentId: comment.id },
+        push: {
+          title: 'New Comment',
+          body: `New comment on "${report.title}"`,
+          data: { reportId: id, type: 'report_comment', commentId: comment.id },
+        },
+      }, app.log)
 
       return reply.code(201).send({
         id: comment.id,
@@ -823,15 +720,7 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     try {
       const userId = (req.user as any).userId
@@ -927,15 +816,7 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid report ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid report ID format')
 
     try {
       const count = await prisma.reportConfirmation.count({

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import {
@@ -224,15 +225,7 @@ export async function notificationsRoutes(app: FastifyInstance) {
     }
 
     const { id } = req.params
-    if (!z.string().uuid().safeParse(id).success) {
-      return reply.code(400).send({
-        error: {
-          code: 'INVALID_ID',
-          message: 'Invalid notification ID format',
-          requestId: req.id,
-        },
-      })
-    }
+    assertUuid(id, 'Invalid notification ID format')
 
     try {
       const result = await markAsRead(id, user.userId)

@@ -37,6 +37,8 @@ export const limits = {
   verifyCode: { max: 10, timeWindow: minutes(15) },
   createReport: { max: 10, timeWindow: minutes(15) },
   sseTicket: { max: 30, timeWindow: minutes(5) },
+  /** Geocoding proxies Nominatim (1 req/s policy); results are cached. */
+  geocoding: { max: 60, timeWindow: minutes(1) },
 }
 
 /**

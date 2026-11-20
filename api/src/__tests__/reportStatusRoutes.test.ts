@@ -16,6 +16,7 @@ vi.mock('../prisma.js', async () => {
     reportStatusHistory: fake.tx.reportStatusHistory,
     auditLog: fake.tx.auditLog,
     reportConfirmation: { count: vi.fn(async () => 0), findUnique: vi.fn(async () => null) },
+    reportComment: { create: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(fake.tx)),
   }
   return { prisma }
@@ -46,6 +47,8 @@ const mocked = prisma as unknown as {
   userAccount: { findUnique: ReturnType<typeof vi.fn> }
   report: { findMany: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn>; findFirst: ReturnType<typeof vi.fn> }
   reportConfirmation: { count: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> }
+  reportComment: { create: ReturnType<typeof vi.fn> }
+  auditLog: { create: (args: unknown) => Promise<unknown> }
 }
 
 const USERS = {
@@ -285,6 +288,83 @@ describe('report status and visibility routes', () => {
     it('looks up admins by id only', async () => {
       await app.inject({ method: 'GET', url: `/admin/reports/${REPORT_ID}`, headers: auth(USERS.admin) })
       expect(mocked.report.findFirst.mock.calls[0][0].where).toEqual({ id: REPORT_ID })
+    })
+  })
+
+  describe('POST /admin/reports/:id/comments', () => {
+    const url = `/admin/reports/${REPORT_ID}/comments`
+
+    it('records the signed-in staff member as the author, ignoring a body authorId', async () => {
+      mocked.report.findFirst.mockResolvedValue({ id: REPORT_ID, title: 'Pothole' })
+      mocked.reportComment.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'c1',
+        body: data.body,
+        createdAt: new Date(),
+        author: { id: data.authorId, email: USERS.admin.email, fullName: null },
+      }))
+
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        headers: auth(USERS.admin),
+        payload: { body: 'On it', authorId: USERS.citizen.id },
+      })
+
+      expect(res.statusCode).toBe(201)
+      expect(mocked.reportComment.create.mock.calls[0][0].data).toEqual({ reportId: REPORT_ID, body: 'On it', authorId: USERS.admin.id })
+      expect(fake.state.audit).toEqual([expect.objectContaining({ userId: USERS.admin.id, action: 'report_comment_added' })])
+    })
+
+    it("returns 404 to an officer commenting on a report outside their scope", async () => {
+      mocked.report.findFirst.mockResolvedValue(null)
+
+      const res = await app.inject({ method: 'POST', url, headers: auth(USERS.officer), payload: { body: 'hi' } })
+
+      expect(res.statusCode).toBe(404)
+      expect(mocked.report.findFirst.mock.calls[0][0].where).toEqual({
+        AND: [
+          { id: REPORT_ID },
+          { OR: [{ status: { in: ['new', 'triaged'] } }, { assignments: { some: { assigneeId: USERS.officer.id } } }] },
+        ],
+      })
+      expect(mocked.reportComment.create).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('validation error envelope (unchanged by parseOrThrow/assertUuid)', () => {
+    it('returns VALIDATION_ERROR with details for a bad query', async () => {
+      // /admin/reports has no Fastify querystring schema, so our own parser handles it.
+      const res = await app.inject({ method: 'GET', url: '/admin/reports?status=bogus', headers: auth(USERS.admin) })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid query parameters',
+          details: expect.objectContaining({ fieldErrors: expect.objectContaining({ status: expect.any(Array) }) }),
+          requestId: expect.any(String),
+        },
+      })
+    })
+
+    it('returns VALIDATION_ERROR for a bad body', async () => {
+      fake.addReport(REPORT_ID, 'new')
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/admin/reports/${REPORT_ID}/status`,
+        headers: auth(USERS.admin),
+        payload: { status: 'done' },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json().error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Invalid request data' })
+      expect(fake.state.history).toHaveLength(0)
+    })
+
+    it('returns INVALID_ID without details for a malformed id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/admin/reports/not-a-uuid', headers: auth(USERS.admin) })
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toEqual({
+        error: { code: 'INVALID_ID', message: 'Invalid report ID format', requestId: expect.any(String) },
+      })
     })
   })
 })
