@@ -75,10 +75,21 @@ export default function ReportDetailScreen() {
 
     try {
       setLoading(true);
-      // Use detailed report for officers, regular report for citizens
-      const data = isOfficer
-        ? await apiClient.getDetailedReport(id)
-        : await apiClient.getReport(id);
+      // Use detailed report for officers, regular report for citizens. Officers
+      // only get the detailed view for the triage queue and their own
+      // assignments; for anything else the API answers 404, so fall back to the
+      // public view.
+      let data;
+      if (isOfficer) {
+        try {
+          data = await apiClient.getDetailedReport(id);
+        } catch (error: any) {
+          if (error?.response?.status !== 404) throw error;
+          data = await apiClient.getReport(id);
+        }
+      } else {
+        data = await apiClient.getReport(id);
+      }
       setReport(data);
     } catch (error) {
       console.error('Failed to load report:', error);

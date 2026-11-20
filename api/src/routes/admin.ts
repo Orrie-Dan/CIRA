@@ -5,7 +5,8 @@ import { userRepository } from '../repositories/index.js'
 import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
-import { authenticateUser, staffAuth, adminAuth } from '../utils/authMiddleware.js'
+import { authenticateUser, staffAuth, adminAuth, requireAuthenticatedUser } from '../utils/authMiddleware.js'
+import { changeReportStatus, applyStatusChange, notifyStatusChange, staffReportVisibilityFilter, TRIAGE_QUEUE_STATUSES } from '../services/reportStatusService.js'
 import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
 import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
 import { broadcastNotificationToUser } from './notifications.js'
@@ -25,9 +26,14 @@ export async function adminRoutes(app: FastifyInstance) {
       })
     }
 
+    const user = requireAuthenticatedUser(req)
+    // Officers only see the triage queue and reports assigned to them; anything
+    // else is reported as not found so we don't leak which reports exist.
+    const visibility = staffReportVisibilityFilter({ userId: user.userId, role: user.role })
+
     try {
-      const report = await prisma.report.findUnique({
-        where: { id },
+      const report = await prisma.report.findFirst({
+        where: visibility ? { AND: [{ id }, visibility] } : { id },
         select: {
           id: true,
           title: true,
@@ -210,6 +216,12 @@ export async function adminRoutes(app: FastifyInstance) {
         }
       }
 
+      const user = requireAuthenticatedUser(req)
+      const visibility = staffReportVisibilityFilter({ userId: user.userId, role: user.role })
+      if (visibility) {
+        where.AND = [...(where.AND ?? []), visibility]
+      }
+
       // Query reports with all necessary fields
       const [reports, total] = await Promise.all([
         prisma.report.findMany({
@@ -300,6 +312,7 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       })
     } catch (error) {
+      if (error instanceof ApiError) throw error
       app.log.error(error, 'Failed to list reports')
       throw new ApiError(500, 'Failed to fetch reports', 'FETCH_FAILED')
     }
@@ -361,10 +374,12 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     try {
+      const user = requireAuthenticatedUser(req)
+
       // Verify report exists
       const report = await prisma.report.findUnique({
         where: { id },
-        select: { id: true, status: true },
+        select: { id: true, status: true, title: true },
       })
 
       if (!report) {
@@ -377,30 +392,42 @@ export async function adminRoutes(app: FastifyInstance) {
         })
       }
 
-      // Create assignment
-      const assignment = await prisma.reportAssignment.create({
-        data: {
-          reportId: id,
-          assigneeId: parsed.data.assigneeId,
-          organizationId: parsed.data.organizationId,
-          dueAt: parsed.data.dueAt ? new Date(parsed.data.dueAt) : undefined,
-        },
-        include: {
-          assignee: {
-            select: { id: true, email: true, fullName: true },
+      // Create the assignment and, for reports still in the triage queue, move
+      // them to 'assigned' — atomically, so we never keep one without the other.
+      const assignment = await prisma.$transaction(async (tx) => {
+        const created = await tx.reportAssignment.create({
+          data: {
+            reportId: id,
+            assigneeId: parsed.data.assigneeId,
+            organizationId: parsed.data.organizationId,
+            dueAt: parsed.data.dueAt ? new Date(parsed.data.dueAt) : undefined,
           },
-          organization: {
-            select: { id: true, name: true, contactEmail: true, contactPhone: true },
+          include: {
+            assignee: {
+              select: { id: true, email: true, fullName: true },
+            },
+            organization: {
+              select: { id: true, name: true, contactEmail: true, contactPhone: true },
+            },
           },
-        },
-      })
+        })
 
-      // Get user ID for audit logging
-      const userId = (req.user as any)?.userId
+        if (TRIAGE_QUEUE_STATUSES.includes(report.status as (typeof TRIAGE_QUEUE_STATUSES)[number])) {
+          await applyStatusChange(tx, {
+            reportId: id,
+            toStatus: 'assigned',
+            note: `Report assigned${created.assignee ? ` to ${created.assignee.fullName || created.assignee.email}` : ''}${created.organization ? ` to ${created.organization.name}` : ''}`,
+            actor: { userId: user.userId, role: user.role },
+            source: 'assign',
+          })
+        }
+
+        return created
+      })
 
       // Log audit event
       await logAuditEvent({
-        userId: userId,
+        userId: user.userId,
         action: AuditActions.REPORT_ASSIGNED,
         resourceType: ResourceTypes.ASSIGNMENT,
         resourceId: assignment.id,
@@ -411,29 +438,7 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       })
 
-      // Get report title for notification
-      const reportWithTitle = await prisma.report.findUnique({
-        where: { id },
-        select: { title: true },
-      })
-
-      // Update report status to 'assigned' if it's still 'new' or 'triaged'
-      if (report.status === 'new' || report.status === 'triaged') {
-        await prisma.$transaction([
-          prisma.report.update({
-            where: { id },
-            data: { status: 'assigned' },
-          }),
-          prisma.reportStatusHistory.create({
-            data: {
-              reportId: id,
-              fromStatus: report.status,
-              toStatus: 'assigned',
-              note: `Report assigned${assignment.assignee ? ` to ${assignment.assignee.fullName || assignment.assignee.email}` : ''}${assignment.organization ? ` to ${assignment.organization.name}` : ''}`,
-            },
-          }),
-        ])
-      }
+      const reportWithTitle = { title: report.title }
 
       // Notify assigned officer about assignment
       if (assignment.assigneeId) {
@@ -484,6 +489,7 @@ export async function adminRoutes(app: FastifyInstance) {
         createdAt: assignment.createdAt.toISOString(),
       })
     } catch (error) {
+      if (error instanceof ApiError) throw error
       app.log.error(error, 'Failed to assign report')
       throw new ApiError(500, 'Failed to assign report', 'ASSIGN_FAILED')
     }
@@ -616,7 +622,8 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   })
 
-  // Update report status (with user tracking)
+  // Update report status. The actor always comes from the session; transition
+  // rules and officer ownership are enforced by the status service.
   app.patch('/admin/reports/:id/status', staffAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
     if (!z.string().uuid().safeParse(id).success) {
@@ -629,9 +636,8 @@ export async function adminRoutes(app: FastifyInstance) {
       })
     }
 
-    const parsed = updateReportStatusSchema.extend({
-      changedBy: z.string().uuid().optional(),
-    }).safeParse(req.body)
+    // Unknown keys (including a legacy client-sent changedBy) are stripped and ignored.
+    const parsed = updateReportStatusSchema.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({
         error: {
@@ -643,83 +649,17 @@ export async function adminRoutes(app: FastifyInstance) {
       })
     }
 
+    const user = requireAuthenticatedUser(req)
+
     try {
-      const current = await prisma.report.findUnique({
-        where: { id },
-        select: { status: true },
+      const { report } = await changeReportStatus({
+        reportId: id,
+        toStatus: parsed.data.status,
+        note: parsed.data.note,
+        actor: { userId: user.userId, role: user.role },
       })
 
-      if (!current) {
-        return reply.code(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Report not found',
-            requestId: req.id,
-          },
-        })
-      }
-
-      const [report] = await prisma.$transaction([
-        prisma.report.update({
-          where: { id },
-          data: { status: parsed.data.status },
-          select: {
-            id: true,
-            title: true,
-            status: true,
-            updatedAt: true,
-          },
-        }),
-        prisma.reportStatusHistory.create({
-          data: {
-            reportId: id,
-            fromStatus: current.status,
-            toStatus: parsed.data.status,
-            note: parsed.data.note || `Status changed to ${parsed.data.status}`,
-            changedBy: parsed.data.changedBy,
-          },
-        }),
-      ])
-
-      // Notify reporter and assigned officer about status change
-      try {
-        const recipients = await getReportNotificationRecipients(id)
-        
-        if (recipients.length > 0) {
-          await notifyUsers(
-            recipients,
-            'report_status_changed',
-            'Report Status Updated',
-            `Report "${report.title}" status changed to ${parsed.data.status}`,
-            {
-              reportId: id,
-              reportTitle: report.title,
-              status: parsed.data.status,
-            }
-          )
-
-          // Send push notifications
-          await sendPushNotificationsToUsers(
-            recipients,
-            'Report Status Updated',
-            `"${report.title}" is now ${parsed.data.status}`,
-            { reportId: id, type: 'report_status_changed', status: parsed.data.status }
-          )
-
-          // Broadcast via SSE
-          recipients.forEach((userId) => {
-            broadcastNotificationToUser(userId, {
-              type: 'report_status_changed',
-              title: 'Report Status Updated',
-              body: `Report "${report.title}" status changed to ${parsed.data.status}`,
-              data: { reportId: id, reportTitle: report.title, status: parsed.data.status },
-            })
-          })
-        }
-      } catch (notifError) {
-        app.log.error(notifError, 'Failed to send notifications for status change')
-        // Don't fail the request if notifications fail
-      }
+      await notifyStatusChange(report, report.status, app.log)
 
       return reply.send({
         id: report.id,
@@ -728,6 +668,7 @@ export async function adminRoutes(app: FastifyInstance) {
         updatedAt: report.updatedAt.toISOString(),
       })
     } catch (error) {
+      if (error instanceof ApiError) throw error
       app.log.error(error, 'Failed to update report status')
       throw new ApiError(500, 'Failed to update report status', 'UPDATE_FAILED')
     }
@@ -1051,34 +992,30 @@ export async function adminRoutes(app: FastifyInstance) {
         const officer = availableOfficers[i % availableOfficers.length]
 
         try {
-          // Create assignment
-          const assignment = await prisma.reportAssignment.create({
-            data: {
-              reportId: report.id,
-              assigneeId: officer.id,
-            },
-            include: {
-              assignee: {
-                select: { id: true, email: true, fullName: true },
-              },
-            },
-          })
-
-          // Update report status to 'assigned' if it's still 'new' or 'triaged'
-          await prisma.$transaction([
-            prisma.report.update({
-              where: { id: report.id },
-              data: { status: 'assigned' },
-            }),
-            prisma.reportStatusHistory.create({
+          // Create the assignment and move the report to 'assigned' atomically.
+          const assignment = await prisma.$transaction(async (tx) => {
+            const created = await tx.reportAssignment.create({
               data: {
                 reportId: report.id,
-                fromStatus: report.status,
-                toStatus: 'assigned',
-                note: `Auto-assigned to ${officer.fullName || officer.email}`,
+                assigneeId: officer.id,
               },
-            }),
-          ])
+              include: {
+                assignee: {
+                  select: { id: true, email: true, fullName: true },
+                },
+              },
+            })
+
+            await applyStatusChange(tx, {
+              reportId: report.id,
+              toStatus: 'assigned',
+              note: `Auto-assigned to ${officer.fullName || officer.email}`,
+              actor: { userId: currentUser.userId, role: currentUser.role },
+              source: 'assign',
+            })
+
+            return created
+          })
 
           assignments.push({
             reportId: assignment.reportId,

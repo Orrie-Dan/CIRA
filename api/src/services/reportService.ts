@@ -42,34 +42,3 @@ export async function createReportWithHistory(input: CreateReportInput) {
 
   return report
 }
-
-export async function updateReportStatusWithHistory(params: {
-  reportId: string
-  toStatus: string
-  note?: string
-  changedBy?: string
-}) {
-  const existing = await reportRepository.findById(params.reportId)
-  if (!existing) return null
-
-  const updated = await prisma.$transaction(async (tx) => {
-    const report = await tx.report.update({
-      where: { id: params.reportId },
-      data: { status: params.toStatus },
-    })
-
-    await tx.reportStatusHistory.create({
-      data: {
-        reportId: params.reportId,
-        fromStatus: existing.status,
-        toStatus: params.toStatus,
-        note: params.note,
-        changedBy: params.changedBy,
-      },
-    })
-
-    return report
-  })
-
-  return updated
-}

@@ -523,7 +523,6 @@ export interface AddCommentPayload {
 export interface UpdateStatusPayload {
   status: 'new' | 'triaged' | 'assigned' | 'in_progress' | 'resolved' | 'rejected'
   note?: string
-  changedBy?: string
 }
 
 // Admin API functions

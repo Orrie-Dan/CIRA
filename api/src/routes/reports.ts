@@ -9,7 +9,8 @@ import { notifyUsers, getReportNotificationRecipients } from '../utils/notificat
 import { getOfficersAndAdmins } from '../utils/notifications.js'
 import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
 import { broadcastNotificationToUser } from './notifications.js'
-import { authenticateUser, optionalAuthenticate, getAuthenticatedUser, reportMutationAuth } from '../utils/authMiddleware.js'
+import { authenticateUser, optionalAuthenticate, getAuthenticatedUser, requireAuthenticatedUser, reportMutationAuth } from '../utils/authMiddleware.js'
+import { changeReportStatus, notifyStatusChange } from '../services/reportStatusService.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import { createReportWithHistory } from '../services/reportService.js'
 
@@ -178,6 +179,8 @@ export async function reportsRoutes(app: FastifyInstance) {
 
   // List reports with filters
   app.get('/reports', {
+    // Public, but recognises the caller when a token is sent (needed for myReports).
+    preHandler: optionalAuthenticate,
     schema: {
       description: 'List reports with optional filters (bbox, status, type)',
       tags: ['reports'],
@@ -279,14 +282,16 @@ export async function reportsRoutes(app: FastifyInstance) {
         where.type = parsed.data.type
       }
 
-      // Filter by reporterId if provided (for "My Reports")
-      if (req.user) {
-        const userId = (req.user as any).userId
-        // Allow filtering by reporterId if user is authenticated
-        // This will be used for "My Reports" functionality
-        if ((req.query as any).myReports === 'true') {
-          where.reporterId = userId
+      // "My Reports": only the caller's own reports. Without a valid session this
+      // must fail rather than silently return everyone's reports.
+      // Fastify may already have coerced the querystring value to a boolean.
+      const myReports = (req.query as any).myReports
+      if (myReports === true || myReports === 'true') {
+        const sessionUser = getAuthenticatedUser(req)
+        if (!sessionUser) {
+          throw new ApiError(401, 'Authentication required to list your reports', 'UNAUTHORIZED')
         }
+        where.reporterId = sessionUser.userId
       }
 
       const orderBy = { createdAt: 'desc' as const }
@@ -402,6 +407,7 @@ export async function reportsRoutes(app: FastifyInstance) {
       
       return reply.send(responseData)
     } catch (error) {
+      if (error instanceof ApiError) throw error
       app.log.error(error, 'Failed to list reports')
       throw new ApiError(500, 'Failed to fetch reports', 'FETCH_FAILED')
     }
@@ -660,97 +666,17 @@ export async function reportsRoutes(app: FastifyInstance) {
       })
     }
 
+    const user = requireAuthenticatedUser(req)
+
     try {
-      // Get current status
-      const current = await prisma.report.findUnique({
-        where: { id },
-        select: { status: true },
+      const { report } = await changeReportStatus({
+        reportId: id,
+        toStatus: parsed.data.status,
+        note: parsed.data.note,
+        actor: { userId: user.userId, role: user.role },
       })
 
-      if (!current) {
-        return reply.code(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Report not found',
-            requestId: req.id,
-          },
-        })
-      }
-
-      // Get user ID if authenticated
-      const userId = (req.user as any)?.userId
-
-      // Update status and create history entry in transaction
-      const [report] = await prisma.$transaction([
-        prisma.report.update({
-          where: { id },
-          data: { status: parsed.data.status },
-          select: {
-            id: true,
-            title: true,
-            status: true,
-            updatedAt: true,
-          },
-        }),
-        prisma.reportStatusHistory.create({
-          data: {
-            reportId: id,
-            fromStatus: current.status,
-            toStatus: parsed.data.status,
-            note: parsed.data.note || `Status changed to ${parsed.data.status}`,
-            changedBy: userId,
-          },
-        }),
-      ])
-
-      // Log audit event
-      await logAuditEvent({
-        userId: userId,
-        action: AuditActions.REPORT_STATUS_CHANGED,
-        resourceType: ResourceTypes.REPORT,
-        resourceId: id,
-        details: { fromStatus: current.status, toStatus: parsed.data.status },
-      })
-
-      // Notify reporter and assigned officer about status change
-      try {
-        const recipients = await getReportNotificationRecipients(id)
-        
-        if (recipients.length > 0) {
-          await notifyUsers(
-            recipients,
-            'report_status_changed',
-            'Report Status Updated',
-            `Report "${report.title}" status changed to ${parsed.data.status}`,
-            {
-              reportId: id,
-              reportTitle: report.title,
-              status: parsed.data.status,
-            }
-          )
-
-          // Send push notifications
-          await sendPushNotificationsToUsers(
-            recipients,
-            'Report Status Updated',
-            `"${report.title}" is now ${parsed.data.status}`,
-            { reportId: id, type: 'report_status_changed', status: parsed.data.status }
-          )
-
-          // Broadcast via SSE
-          recipients.forEach((userId) => {
-            broadcastNotificationToUser(userId, {
-              type: 'report_status_changed',
-              title: 'Report Status Updated',
-              body: `Report "${report.title}" status changed to ${parsed.data.status}`,
-              data: { reportId: id, reportTitle: report.title, status: parsed.data.status },
-            })
-          })
-        }
-      } catch (notifError) {
-        app.log.error(notifError, 'Failed to send notifications for status change')
-        // Don't fail the request if notifications fail
-      }
+      await notifyStatusChange(report, report.status, app.log)
 
       return reply.send({
         id: report.id,
@@ -759,6 +685,7 @@ export async function reportsRoutes(app: FastifyInstance) {
         updatedAt: report.updatedAt.toISOString(),
       })
     } catch (error) {
+      if (error instanceof ApiError) throw error
       app.log.error(error, 'Failed to update report status')
       throw new ApiError(500, 'Failed to update report status', 'UPDATE_FAILED')
     }
@@ -992,6 +919,8 @@ export async function reportsRoutes(app: FastifyInstance) {
 
   // Get confirmation count for a report
   app.get('/reports/:id/confirmations', {
+    // Public, but recognises the caller so userConfirmed is accurate.
+    preHandler: optionalAuthenticate,
     schema: {
       description: 'Get confirmation count for a report',
       tags: ['reports'],

@@ -11,13 +11,6 @@ export const reportRepository = {
     return prisma.report.create({ data })
   },
 
-  updateStatus(id: string, status: string) {
-    return prisma.report.update({
-      where: { id },
-      data: { status },
-    })
-  },
-
   list(where: Prisma.ReportWhereInput, skip: number, take: number) {
     return prisma.report.findMany({
       where,

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify'
 import { JWTPayload } from './auth.js'
 import { prisma } from '../prisma.js'
+import { ApiError } from './errors.js'
 
 // Extend Fastify JWT types to properly type the payload
 declare module '@fastify/jwt' {
@@ -15,6 +16,18 @@ type AuthenticatedRequest = FastifyRequest & {
 
 export function getAuthenticatedUser(request: FastifyRequest): JWTPayload | undefined {
   return (request as AuthenticatedRequest).user
+}
+
+/**
+ * For handlers behind authenticateUser: returns the session user or throws 401,
+ * so handlers never fall back to identity supplied by the client.
+ */
+export function requireAuthenticatedUser(request: FastifyRequest): JWTPayload {
+  const user = getAuthenticatedUser(request)
+  if (!user) {
+    throw new ApiError(401, 'Authentication required', 'UNAUTHORIZED')
+  }
+  return user
 }
 
 function getUser(request: FastifyRequest): JWTPayload | undefined {
