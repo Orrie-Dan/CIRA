@@ -63,7 +63,9 @@ describe.skipIf(!url)('API integration (postgres)', () => {
 
     app = await buildApp({ logger: false })
     await app.ready()
-  })
+    // Loading the whole app and opening the first DB connection takes ~9 s on
+    // slower machines, close to vitest's default 10 s hook timeout.
+  }, 30_000)
 
   afterAll(async () => {
     await app?.close()
@@ -176,12 +178,42 @@ describe.skipIf(!url)('API integration (postgres)', () => {
     await drainNotifications()
     const notifications = await app.inject({ method: 'GET', url: '/notifications', headers: as('citizen') })
     expect(notifications.statusCode).toBe(200)
-    const types = (notifications.json().data as Array<{ type: string }>).map((n) => n.type)
-    // triaged, in_progress, resolved. Assignment notifies the officer, not the
-    // reporter (existing behaviour), so 'assigned' produces no reporter notification.
-    expect(types.filter((t) => t === 'report_status_changed')).toHaveLength(3)
-    const officerInbox = await app.inject({ method: 'GET', url: '/notifications', headers: as('officer') })
-    expect((officerInbox.json().data as Array<{ type: string }>).some((n) => n.type === 'report_assigned')).toBe(true)
+    type Inbox = Array<{ type: string; data?: { status?: string } }>
+    const statusesSeen = (inbox: Inbox) =>
+      inbox.filter((n) => n.type === 'report_status_changed').map((n) => n.data?.status).sort()
+    // The reporter hears about every step, including the assignment.
+    expect(statusesSeen(notifications.json().data)).toEqual(['assigned', 'in_progress', 'resolved', 'triaged'])
+    // The officer gets "assigned to you" instead of a second 'assigned' status notification.
+    const officerInbox = (await app.inject({ method: 'GET', url: '/notifications', headers: as('officer') })).json().data as Inbox
+    expect(officerInbox.filter((n) => n.type === 'report_assigned')).toHaveLength(1)
+    expect(statusesSeen(officerInbox)).not.toContain('assigned')
+  })
+
+  it('auto-assign notifies the officer and the reporter', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/reports',
+      headers: as('citizen'),
+      payload: { title: 'Blocked drain', description: 'Flooding after rain', type: 'drainage', severity: 'high', latitude: -1.95, longitude: 30.07 },
+    })
+    expect(created.statusCode).toBe(201)
+    const autoReportId = created.json().id
+    await drainNotifications()
+
+    const auto = await app.inject({ method: 'POST', url: '/admin/reports/auto-assign', headers: as('admin') })
+    expect(auto.statusCode).toBe(200)
+    expect(auto.json().data.map((a: { reportId: string }) => a.reportId)).toContain(autoReportId)
+    await drainNotifications()
+
+    const forReport = async (who: 'citizen' | 'officer') =>
+      ((await app.inject({ method: 'GET', url: '/notifications', headers: as(who) })).json().data as Array<{ type: string; data?: { reportId?: string; status?: string } }>)
+        .filter((n) => n.data?.reportId === autoReportId)
+        .map((n) => `${n.type}${n.data?.status ? `:${n.data.status}` : ''}`)
+        .sort()
+
+    expect(await forReport('citizen')).toEqual(['report_status_changed:assigned'])
+    // Staff were already alerted when the report was filed (report_created).
+    expect(await forReport('officer')).toEqual(['report_assigned', 'report_created'])
   })
 
   it('records the staff member as comment author and keeps officers out of other reports', async () => {

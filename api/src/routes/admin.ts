@@ -8,7 +8,7 @@ import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, upda
 import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
 import { authenticateUser, staffAuth, adminAuth, requireAuthenticatedUser } from '../utils/authMiddleware.js'
-import { changeReportStatus, applyStatusChange, notifyStatusChange, staffReportVisibilityFilter, TRIAGE_QUEUE_STATUSES } from '../services/reportStatusService.js'
+import { changeReportStatus, applyStatusChange, notifyStatusChange, notifyAssignment, staffReportVisibilityFilter, TRIAGE_QUEUE_STATUSES } from '../services/reportStatusService.js'
 import { getReportNotificationRecipients } from '../utils/notifications.js'
 import { enqueueNotification } from '../services/notificationDispatcher.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
@@ -357,7 +357,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
       // Create the assignment and, for reports still in the triage queue, move
       // them to 'assigned' — atomically, so we never keep one without the other.
-      const assignment = await prisma.$transaction(async (tx) => {
+      const { created: assignment, statusChanged } = await prisma.$transaction(async (tx) => {
         const created = await tx.reportAssignment.create({
           data: {
             reportId: id,
@@ -375,7 +375,8 @@ export async function adminRoutes(app: FastifyInstance) {
           },
         })
 
-        if (TRIAGE_QUEUE_STATUSES.includes(report.status as (typeof TRIAGE_QUEUE_STATUSES)[number])) {
+        const inTriage = TRIAGE_QUEUE_STATUSES.includes(report.status as (typeof TRIAGE_QUEUE_STATUSES)[number])
+        if (inTriage) {
           await applyStatusChange(tx, {
             reportId: id,
             toStatus: 'assigned',
@@ -385,7 +386,7 @@ export async function adminRoutes(app: FastifyInstance) {
           })
         }
 
-        return created
+        return { created, statusChanged: inTriage }
       })
 
       // Log audit event
@@ -401,27 +402,13 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       })
 
-      const reportWithTitle = { title: report.title }
-
-      // Notify the assigned officer (after the response).
-      if (assignment.assigneeId) {
-        enqueueNotification({
-          recipients: [assignment.assigneeId],
-          type: 'report_assigned',
-          title: 'Report Assigned to You',
-          body: `Report "${reportWithTitle.title || 'Untitled'}" has been assigned to you`,
-          data: {
-            reportId: id,
-            reportTitle: reportWithTitle.title,
-            assigneeId: assignment.assigneeId,
-            organizationId: assignment.organizationId || undefined,
-          },
-          push: {
-            body: `"${reportWithTitle.title || 'Untitled'}"`,
-            data: { reportId: id, type: 'report_assigned' },
-          },
-        }, app.log)
-      }
+      // Notify the assigned officer and the reporter (after the response).
+      notifyAssignment({
+        reportId: id,
+        reportTitle: report.title,
+        assigneeId: assignment.assigneeId,
+        organizationId: assignment.organizationId,
+      }, statusChanged, app.log)
 
       return reply.code(201).send({
         id: assignment.id,
@@ -872,6 +859,13 @@ export async function adminRoutes(app: FastifyInstance) {
             reportId: assignment.reportId,
             assignee: assignment.assignee,
           })
+
+          notifyAssignment({
+            reportId: report.id,
+            reportTitle: report.title,
+            assigneeId: officer.id,
+            organizationId: null,
+          }, true, app.log)
         } catch (error) {
           app.log.error({ error, reportId: report.id, officerId: officer.id }, 'Failed to assign report')
           // Continue with next report

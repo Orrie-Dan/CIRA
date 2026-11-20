@@ -9,8 +9,11 @@ vi.mock('../utils/pushNotifications.js', () => ({ sendPushNotificationsToUsers: 
 vi.mock('../routes/notifications.js', () => ({ broadcastNotificationToUser: vi.fn() }))
 
 import type { Prisma } from '@prisma/client'
+import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
+import { drainNotifications } from '../services/notificationDispatcher.js'
 import {
   applyStatusChange,
+  notifyAssignment,
   staffReportVisibilityFilter,
   REPORT_STATUSES,
   type ReportStatus,
@@ -225,5 +228,45 @@ describe('report status service', () => {
         ],
       })
     })
+  })
+})
+
+describe('assignment notifications', () => {
+  const log = { error: vi.fn() }
+  const REPORT = { reportId: 'report-1', reportTitle: 'Pothole' }
+
+  beforeEach(() => {
+    vi.mocked(notifyUsers).mockReset()
+    // Recipients of a status change: the reporter and the latest assignee.
+    vi.mocked(getReportNotificationRecipients).mockResolvedValue(['citizen-1', 'officer-1'])
+  })
+
+  /** Recipients of each notification type that was sent. */
+  async function sent() {
+    await drainNotifications()
+    return vi.mocked(notifyUsers).mock.calls.map(([recipients, type, , , data]) => ({ type, recipients, status: (data as { status?: string })?.status }))
+  }
+
+  it('tells the officer it was assigned to them and the reporter that the report is now assigned', async () => {
+    notifyAssignment({ ...REPORT, assigneeId: 'officer-1', organizationId: null }, true, log)
+
+    expect(await sent()).toEqual(expect.arrayContaining([
+      { type: 'report_assigned', recipients: ['officer-1'], status: undefined },
+      { type: 'report_status_changed', recipients: ['citizen-1'], status: 'assigned' },
+    ]))
+    expect(vi.mocked(notifyUsers)).toHaveBeenCalledTimes(2)
+  })
+
+  it('notifies only the reporter for an organization-only assignment', async () => {
+    vi.mocked(getReportNotificationRecipients).mockResolvedValue(['citizen-1'])
+    notifyAssignment({ ...REPORT, assigneeId: null, organizationId: 'org-1' }, true, log)
+
+    expect(await sent()).toEqual([{ type: 'report_status_changed', recipients: ['citizen-1'], status: 'assigned' }])
+  })
+
+  it('does not notify the reporter when re-assigning a report whose status did not change', async () => {
+    notifyAssignment({ ...REPORT, assigneeId: 'officer-2', organizationId: null }, false, log)
+
+    expect(await sent()).toEqual([{ type: 'report_assigned', recipients: ['officer-2'], status: undefined }])
   })
 })
