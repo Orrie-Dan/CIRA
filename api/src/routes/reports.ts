@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { createReportSchema, updateReportStatusSchema, listReportsQuerySchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
-import { checkRateLimitAsync, getClientIp } from '../utils/rateLimit.js'
+import { limits } from '../utils/rateLimit.js'
 import { zodToJsonSchemaFastify } from '../utils/swagger.js'
 import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
 import { getOfficersAndAdmins } from '../utils/notifications.js'
@@ -17,6 +17,7 @@ export async function reportsRoutes(app: FastifyInstance) {
   // Create report
   app.post('/reports', {
     preHandler: optionalAuthenticate,
+    config: { rateLimit: limits.createReport },
     schema: {
       description: 'Create a new infrastructure report',
       tags: ['reports'],
@@ -58,7 +59,7 @@ export async function reportsRoutes(app: FastifyInstance) {
               properties: {
                 code: { type: 'string' },
                 message: { type: 'string' },
-                resetAt: { type: 'string' },
+                details: { type: 'object', properties: { retryAfter: { type: 'string' } } },
                 requestId: { type: 'string' },
               },
             },
@@ -67,21 +68,6 @@ export async function reportsRoutes(app: FastifyInstance) {
       },
     },
   }, async (req: FastifyRequest, reply) => {
-    const ip = getClientIp(req)
-    const limitCheck = await checkRateLimitAsync(ip)
-    if (!limitCheck.allowed) {
-      return reply
-        .code(429)
-        .send({
-          error: {
-            code: 'RATE_LIMIT_EXCEEDED',
-            message: 'Too many requests. Please try again later.',
-            resetAt: limitCheck.resetAt,
-            requestId: req.id,
-          },
-        })
-    }
-
     app.log.info({ body: req.body }, 'Creating report with data:')
     const parsed = createReportSchema.safeParse(req.body)
     if (!parsed.success) {

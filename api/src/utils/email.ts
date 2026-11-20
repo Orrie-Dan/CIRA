@@ -1,6 +1,13 @@
 /**
- * Email sending utility
- * In production, integrate with SendGrid, AWS SES, or similar service
+ * Email sending via the SendGrid v3 REST API (no SDK dependency).
+ *
+ * Config:
+ *   SENDGRID_API_KEY  - required in production
+ *   FROM_EMAIL        - verified sender address, required with SENDGRID_API_KEY
+ *   FROM_NAME         - optional display name (default "CIRA")
+ *
+ * Without SENDGRID_API_KEY outside production, emails are logged to the
+ * console so OTP flows can be exercised locally.
  */
 
 export interface EmailOptions {
@@ -10,37 +17,54 @@ export interface EmailOptions {
   text?: string
 }
 
-/**
- * Send email (mock implementation - replace with actual email service)
- */
-export async function sendEmail(options: EmailOptions): Promise<void> {
-  // In production, use SendGrid or similar:
-  // const sgMail = require('@sendgrid/mail')
-  // sgMail.setApiKey(process.env.SENDGRID_API_KEY)
-  // await sgMail.send({
-  //   to: options.to,
-  //   from: process.env.FROM_EMAIL,
-  //   subject: options.subject,
-  //   html: options.html,
-  //   text: options.text,
-  // })
+const SENDGRID_URL = 'https://api.sendgrid.com/v3/mail/send'
 
-  // For development, just log the email
-  console.log(`[EMAIL] To: ${options.to}`)
-  console.log(`[EMAIL] Subject: ${options.subject}`)
-  console.log(`[EMAIL] Body: ${options.text || options.html}`)
-  
-  // In production, throw error if email service is not configured
-  if (process.env.NODE_ENV === 'production' && !process.env.SENDGRID_API_KEY) {
-    throw new Error('Email service not configured')
+export async function sendEmail(options: EmailOptions): Promise<void> {
+  const apiKey = process.env.SENDGRID_API_KEY
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  if (!apiKey) {
+    if (isProduction) {
+      throw new Error('Email service not configured (SENDGRID_API_KEY missing)')
+    }
+    console.log(`[EMAIL:dev] To: ${options.to}`)
+    console.log(`[EMAIL:dev] Subject: ${options.subject}`)
+    console.log(`[EMAIL:dev] Body: ${options.text || options.html}`)
+    return
+  }
+
+  const fromEmail = process.env.FROM_EMAIL
+  if (!fromEmail) {
+    throw new Error('Email service not configured (FROM_EMAIL missing)')
+  }
+
+  const content: Array<{ type: string; value: string }> = []
+  if (options.text) content.push({ type: 'text/plain', value: options.text })
+  content.push({ type: 'text/html', value: options.html })
+
+  const response = await fetch(SENDGRID_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: options.to }] }],
+      from: { email: fromEmail, name: process.env.FROM_NAME || 'CIRA' },
+      subject: options.subject,
+      content,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`SendGrid request failed (${response.status}): ${detail.slice(0, 300)}`)
   }
 }
 
-/**
- * Send OTP via email
- */
-export async function sendOTPViaEmail(email: string, otp: string): Promise<void> {
-  const html = `
+function codeEmailHtml(title: string, intro: string, code: string, footerNote: string): string {
+  return `
     <!DOCTYPE html>
     <html>
       <head>
@@ -57,14 +81,14 @@ export async function sendOTPViaEmail(email: string, otp: string): Promise<void>
       <body>
         <div class="container">
           <div class="header">
-            <h1>CIRA Verification</h1>
+            <h1>${title}</h1>
           </div>
           <div class="content">
             <p>Hello,</p>
-            <p>Your verification code for CIRA is:</p>
-            <div class="otp-code">${otp}</div>
+            <p>${intro}</p>
+            <div class="otp-code">${code}</div>
             <p>This code will expire in 15 minutes.</p>
-            <p>If you didn't request this code, please ignore this email.</p>
+            <p>${footerNote}</p>
           </div>
           <div class="footer">
             <p>© CIRA - Citizens Infrastructure Reporting Application</p>
@@ -73,20 +97,38 @@ export async function sendOTPViaEmail(email: string, otp: string): Promise<void>
       </body>
     </html>
   `
+}
 
-  const text = `Your CIRA verification code is: ${otp}. This code will expire in 15 minutes.`
-
+/**
+ * Send OTP via email
+ */
+export async function sendOTPViaEmail(email: string, otp: string): Promise<void> {
   await sendEmail({
     to: email,
     subject: 'CIRA Verification Code',
-    html,
-    text,
+    html: codeEmailHtml(
+      'CIRA Verification',
+      'Your verification code for CIRA is:',
+      otp,
+      "If you didn't request this code, please ignore this email."
+    ),
+    text: `Your CIRA verification code is: ${otp}. This code will expire in 15 minutes.`,
   })
 }
 
-
-
-
-
-
-
+/**
+ * Send password reset code via email
+ */
+export async function sendPasswordResetEmail(email: string, otp: string): Promise<void> {
+  await sendEmail({
+    to: email,
+    subject: 'CIRA Password Reset Code',
+    html: codeEmailHtml(
+      'CIRA Password Reset',
+      'Use this code to reset your CIRA password:',
+      otp,
+      "If you didn't request a password reset, you can ignore this email. Your password will not change."
+    ),
+    text: `Your CIRA password reset code is: ${otp}. This code will expire in 15 minutes. If you didn't request this, ignore this email.`,
+  })
+}

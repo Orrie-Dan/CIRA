@@ -37,6 +37,7 @@ export const AuditActions = {
   USER_REGISTERED: 'user_registered',
   USER_LOGIN: 'user_login',
   USER_LOGOUT: 'user_logout',
+  USER_LOGOUT_ALL: 'user_logout_all',
   USER_PROFILE_UPDATED: 'user_profile_updated',
   USER_PASSWORD_CHANGED: 'user_password_changed',
   

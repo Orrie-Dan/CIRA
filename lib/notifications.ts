@@ -134,24 +134,43 @@ export class NotificationSSE {
     this.onNotification = onNotification
     this.onError = onError || null
 
-    const apiBase = API_BASE
-    
-    // Get token from localStorage (EventSource can't send custom headers)
-    // Server supports token in query string for SSE authentication
-    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
-    
-    // Build URL with token in query string (server supports this for SSE)
-    let sseUrl = `${apiBase}/notifications/stream`
-    if (token) {
-      sseUrl += `?token=${encodeURIComponent(token)}`
-    }
-
     // Close existing connection
     this.disconnect()
+    void this.open(++this.generation)
+  }
+
+  // Incremented on every connect/disconnect so a slow ticket request can't
+  // open a stream after the caller has moved on.
+  private generation = 0
+
+  private async open(generation: number) {
+    // EventSource can't send an Authorization header, and a JWT in the URL
+    // would end up in logs. Exchange the token for a one-time ticket
+    // (valid 60s) and put only that in the URL.
+    let sseUrl = `${API_BASE}/notifications/stream`
+    try {
+      const res = await fetch(`${API_BASE}/notifications/stream-ticket`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'include',
+        body: '{}',
+      })
+      if (res.status === 401) {
+        // Not signed in (or session revoked): don't keep retrying.
+        return
+      }
+      if (!res.ok) throw new Error(`stream-ticket failed: ${res.status}`)
+      const { ticket } = (await res.json()) as { ticket: string }
+      sseUrl += `?ticket=${encodeURIComponent(ticket)}`
+    } catch (err) {
+      console.error('Failed to get SSE ticket:', err)
+      if (generation === this.generation) this.scheduleReconnect()
+      return
+    }
+
+    if (generation !== this.generation) return
 
     try {
-      // Note: EventSource uses cookies automatically with credentials
-      // But we also send token in query string as primary auth method
       this.eventSource = new EventSource(sseUrl, { withCredentials: true })
 
       this.eventSource.onopen = () => {
@@ -205,6 +224,7 @@ export class NotificationSSE {
   }
 
   disconnect() {
+    this.generation++
     if (this.eventSource) {
       this.eventSource.close()
       this.eventSource = null

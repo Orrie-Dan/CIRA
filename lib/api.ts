@@ -159,6 +159,8 @@ export async function apiMe(): Promise<{ user: User }> {
     credentials: 'include',
   })
   if (!res.ok) {
+    // Expired or revoked session: drop the stale token
+    if (res.status === 401) clearToken()
     const err = await res.json().catch(() => ({ error: { message: 'Unauthorized' } }))
     throw new Error(err.error?.message || 'Unauthorized')
   }

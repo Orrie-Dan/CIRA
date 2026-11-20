@@ -3,20 +3,18 @@ import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { registerSchema, loginSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
-import { hashPassword, verifyPassword, JWTPayload } from '../utils/auth.js'
+import { hashPassword, verifyPassword, normalizeEmail, JWTPayload } from '../utils/auth.js'
 import { authenticateUser } from '../utils/authMiddleware.js'
+import { issueSession, clearSessionCookie, revokeAllSessions } from '../utils/session.js'
+import { limits } from '../utils/rateLimit.js'
+import { userRepository } from '../repositories/index.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import {
   verifyGoogleToken,
   verifyAppleToken,
   findOrCreateOAuthUser,
 } from '../utils/oauth.js'
-import {
-  generateOTP,
-  storeOTP,
-  verifyOTP,
-  cleanupExpiredOTPs,
-} from '../utils/otp.js'
+import { generateOtpCode, storeOtpRecord, verifyOtpRecord } from '../utils/otp.js'
 import { sendOTPViaEmail } from '../utils/email.js'
 import { sendOTPViaSMS } from '../utils/sms.js'
 import sharp from 'sharp'
@@ -24,7 +22,7 @@ import { uploadToCloudinary, deleteFromCloudinary, extractPublicId } from '../ut
 
 export async function authRoutes(app: FastifyInstance) {
   // Register new user
-  app.post('/auth/register', async (req: FastifyRequest, reply) => {
+  app.post('/auth/register', { config: { rateLimit: limits.register } }, async (req: FastifyRequest, reply) => {
     const body = req.body as Record<string, unknown>
     app.log.info({ body: { ...body, password: body?.password ? '[HIDDEN]' : undefined } }, 'Registration request received:')
     
@@ -55,9 +53,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     try {
       // Check if user already exists
-      const existingUser = await prisma.userAccount.findUnique({
-        where: { email: parsed.data.email },
-      })
+      const existingUser = await userRepository.findByEmail(parsed.data.email)
 
       if (existingUser) {
         return reply.code(409).send({
@@ -82,7 +78,7 @@ export async function authRoutes(app: FastifyInstance) {
         provider: null
         providerId: null
       } = {
-        email: parsed.data.email.trim(),
+        email: normalizeEmail(parsed.data.email),
         passwordHash: passwordHash,
         fullName: parsed.data.fullName && parsed.data.fullName.trim().length > 0 
           ? parsed.data.fullName.trim() 
@@ -113,17 +109,13 @@ export async function authRoutes(app: FastifyInstance) {
       })
 
       // Generate and send OTP
-      cleanupExpiredOTPs()
-      const otp = generateOTP()
-      storeOTP(parsed.data.email, otp, user.id, 'verification')
+      const otp = generateOtpCode()
+      await storeOtpRecord(user.email, otp, user.id, 'verification')
 
-      // Send OTP via email (primary) or SMS (if phone provided)
+      // Always verify the email: it is the login identifier, and an SMS code
+      // must never mark the email as verified.
       try {
-        if (parsed.data.phone) {
-          await sendOTPViaSMS(parsed.data.phone, otp)
-        } else {
-          await sendOTPViaEmail(parsed.data.email, otp)
-        }
+        await sendOTPViaEmail(user.email, otp)
       } catch (error) {
         app.log.error(error, 'Failed to send OTP:')
         // Continue anyway - OTP is logged in development
@@ -241,7 +233,7 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   // Login
-  app.post('/auth/login', async (req: FastifyRequest, reply) => {
+  app.post('/auth/login', { config: { rateLimit: limits.login } }, async (req: FastifyRequest, reply) => {
     const parsed = loginSchema.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({
@@ -256,9 +248,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     try {
       // Find user by email
-      const user = await prisma.userAccount.findUnique({
-        where: { email: parsed.data.email },
-      })
+      const user = await userRepository.findByEmail(parsed.data.email)
 
       if (!user) {
         return reply.code(401).send({
@@ -303,21 +293,7 @@ export async function authRoutes(app: FastifyInstance) {
         })
       }
 
-      // Generate JWT token
-      const token = app.jwt.sign({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      } as JWTPayload)
-
-      // Set HTTP-only cookie
-      reply.setCookie('token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      })
+      const token = issueSession(reply, user)
 
       // Log audit event
       await logAuditEvent({
@@ -627,19 +603,29 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   // Logout
-  app.post('/auth/logout', async (req: FastifyRequest, reply) => {
-    reply.clearCookie('token', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-    })
-
+  app.post('/auth/logout', async (_req: FastifyRequest, reply) => {
+    clearSessionCookie(reply)
     return reply.send({ message: 'Logged out successfully' })
   })
 
+  // Logout from every device: invalidates all JWTs issued to this user
+  app.post('/auth/logout-all', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
+    const userId = (req.user as JWTPayload).userId
+    await revokeAllSessions(userId)
+    clearSessionCookie(reply)
+
+    await logAuditEvent({
+      userId,
+      action: AuditActions.USER_LOGOUT_ALL,
+      resourceType: ResourceTypes.USER,
+      resourceId: userId,
+    })
+
+    return reply.send({ message: 'Logged out from all devices' })
+  })
+
   // Google OAuth login
-  app.post('/auth/google', async (req: FastifyRequest, reply) => {
+  app.post('/auth/google', { config: { rateLimit: limits.oauth } }, async (req: FastifyRequest, reply) => {
     const googleLoginSchema = z.object({
       idToken: z.string().min(1),
     })
@@ -679,21 +665,7 @@ export async function authRoutes(app: FastifyInstance) {
         googleUser.picture
       )
 
-      // Generate JWT token
-      const token = app.jwt.sign({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      } as JWTPayload)
-
-      // Set HTTP-only cookie
-      reply.setCookie('token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      })
+      const token = issueSession(reply, user)
 
       // Log audit event
       await logAuditEvent({
@@ -728,7 +700,7 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   // Apple OAuth login
-  app.post('/auth/apple', async (req: FastifyRequest, reply) => {
+  app.post('/auth/apple', { config: { rateLimit: limits.oauth } }, async (req: FastifyRequest, reply) => {
     const appleLoginSchema = z.object({
       idToken: z.string().min(1),
       fullName: z
@@ -755,6 +727,16 @@ export async function authRoutes(app: FastifyInstance) {
       // Verify Apple token and get user info
       const appleUser = await verifyAppleToken(parsed.data.idToken)
 
+      if (!appleUser.email_verified) {
+        return reply.code(400).send({
+          error: {
+            code: 'EMAIL_NOT_VERIFIED',
+            message: 'Apple email is not verified',
+            requestId: req.id,
+          },
+        })
+      }
+
       // Construct full name from Apple response or request
       let fullName: string | undefined
       if (parsed.data.fullName) {
@@ -779,21 +761,7 @@ export async function authRoutes(app: FastifyInstance) {
         fullName
       )
 
-      // Generate JWT token
-      const token = app.jwt.sign({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      } as JWTPayload)
-
-      // Set HTTP-only cookie
-      reply.setCookie('token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      })
+      const token = issueSession(reply, user)
 
       // Log audit event
       await logAuditEvent({
@@ -828,10 +796,10 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   // Send OTP for verification
-  app.post('/auth/send-otp', async (req: FastifyRequest, reply) => {
+  app.post('/auth/send-otp', { config: { rateLimit: limits.sendCode } }, async (req: FastifyRequest, reply) => {
     const sendOTPSchema = z.object({
-      email: z.string().email().optional(),
-      phone: z.string().optional(),
+      email: z.string().trim().toLowerCase().email().optional(),
+      phone: z.string().trim().optional(),
     })
 
     const parsed = sendOTPSchema.safeParse(req.body)
@@ -857,16 +825,12 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      cleanupExpiredOTPs()
-
       const identifier = parsed.data.email || parsed.data.phone!
-      
+
       // Find user by email or phone
-      const user = await prisma.userAccount.findFirst({
-        where: parsed.data.email
-          ? { email: parsed.data.email }
-          : { phone: parsed.data.phone },
-      })
+      const user = parsed.data.email
+        ? await userRepository.findByEmail(parsed.data.email)
+        : await prisma.userAccount.findFirst({ where: { phone: parsed.data.phone } })
 
       if (!user) {
         // Don't reveal if user exists (security best practice)
@@ -876,15 +840,16 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       // Generate OTP
-      const otp = generateOTP()
-      storeOTP(identifier, otp, user.id, 'verification')
+      const otp = generateOtpCode()
+      await storeOtpRecord(identifier, otp, user.id, 'verification')
 
-      // Send OTP
+      // Deliver over the same channel the code is stored under: email when
+      // an email is given (even if a phone is too), SMS only for phone-only.
       try {
-        if (parsed.data.phone) {
-          await sendOTPViaSMS(parsed.data.phone!, otp)
+        if (parsed.data.email) {
+          await sendOTPViaEmail(identifier, otp)
         } else {
-          await sendOTPViaEmail(parsed.data.email!, otp)
+          await sendOTPViaSMS(identifier, otp)
         }
       } catch (error) {
         app.log.error(error, 'Failed to send OTP:')
@@ -892,7 +857,7 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       return reply.send({
-        message: 'Verification code sent successfully',
+        message: 'If an account exists, a verification code has been sent.',
       })
     } catch (error) {
       app.log.error(error, 'Send OTP error:')
@@ -901,10 +866,10 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   // Verify OTP
-  app.post('/auth/verify-otp', async (req: FastifyRequest, reply) => {
+  app.post('/auth/verify-otp', { config: { rateLimit: limits.verifyCode } }, async (req: FastifyRequest, reply) => {
     const verifyOTPSchema = z.object({
-      email: z.string().email().optional(),
-      phone: z.string().optional(),
+      email: z.string().trim().toLowerCase().email().optional(),
+      phone: z.string().trim().optional(),
       code: z.string().length(6),
     })
 
@@ -931,10 +896,8 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      cleanupExpiredOTPs()
-
       const identifier = parsed.data.email || parsed.data.phone!
-      const verification = verifyOTP(identifier, parsed.data.code, 'verification')
+      const verification = await verifyOtpRecord(identifier, parsed.data.code, 'verification')
 
       if (!verification.valid) {
         return reply.code(400).send({
@@ -946,16 +909,13 @@ export async function authRoutes(app: FastifyInstance) {
         })
       }
 
-      // Update user verification status
-      const updateData: { emailVerified?: boolean; phoneVerified?: boolean } = {}
-      if (parsed.data.email) {
-        updateData.emailVerified = true
-      }
-      if (parsed.data.phone) {
-        updateData.phoneVerified = true
-      }
+      // Only the channel the code was delivered to is verified
+      // (identifier is the email when one was given, else the phone).
+      const updateData: { emailVerified?: boolean; phoneVerified?: boolean } = parsed.data.email
+        ? { emailVerified: true }
+        : { phoneVerified: true }
 
-      const user = await prisma.userAccount.update({
+      const updatedUser = await prisma.userAccount.update({
         where: { id: verification.userId! },
         data: updateData,
         select: {
@@ -967,24 +927,11 @@ export async function authRoutes(app: FastifyInstance) {
           emailVerified: true,
           phoneVerified: true,
           createdAt: true,
+          tokenVersion: true,
         },
       })
 
-      // Generate JWT token after verification
-      const token = app.jwt.sign({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      } as JWTPayload)
-
-      // Set HTTP-only cookie
-      reply.setCookie('token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      })
+      const { tokenVersion, ...user } = updatedUser
 
       // Log audit event
       await logAuditEvent({
@@ -994,6 +941,14 @@ export async function authRoutes(app: FastifyInstance) {
         resourceId: user.id,
         details: { verification: updateData },
       })
+
+      // Same rule as password login: no session until the email is verified
+      // (a phone code alone does not prove ownership of the account email).
+      if (!user.emailVerified) {
+        return reply.send({ user, verified: true, requiresEmailVerification: true })
+      }
+
+      const token = issueSession(reply, { ...user, tokenVersion })
 
       return reply.send({
         user,

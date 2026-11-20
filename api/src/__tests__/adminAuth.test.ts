@@ -34,6 +34,7 @@ import jwt from '@fastify/jwt'
 import cookie from '@fastify/cookie'
 import { adminRoutes } from '../routes/admin.js'
 import { getRequiredSecret } from '../utils/secrets.js'
+import { prisma } from '../prisma.js'
 
 describe('admin route auth', () => {
   const app = Fastify()
@@ -55,10 +56,17 @@ describe('admin route auth', () => {
   })
 
   it('rejects officer token for GET /admin/users', async () => {
+    vi.mocked(prisma.userAccount.findUnique).mockResolvedValueOnce({
+      id: 'officer-1',
+      email: 'officer@test.com',
+      role: 'officer',
+      tokenVersion: 0,
+    } as never)
     const token = app.jwt.sign({
       userId: 'officer-1',
       email: 'officer@test.com',
       role: 'officer',
+      tv: 0,
     })
 
     const response = await app.inject({

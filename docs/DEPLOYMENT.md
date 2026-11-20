@@ -9,8 +9,10 @@
 - `CORS_ORIGIN` — comma-separated frontend origins
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
 - `GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID` — OAuth verification
-- `REDIS_URL` — optional; enables shared OTP and rate limiting across instances
-- `SENDGRID_API_KEY`, `TWILIO_*` — optional OTP delivery channels
+- `REDIS_URL` — optional; shares OTP codes, SSE tickets and rate-limit counters across instances. Required if you run more than one API instance. When set, Redis errors fail the request (no silent fallback to memory).
+- `SENDGRID_API_KEY`, `FROM_EMAIL` — **required in production**: verification and password-reset codes are emailed through the SendGrid REST API. `FROM_EMAIL` must be a verified SendGrid sender. Optional `FROM_NAME` (default `CIRA`).
+- `TWILIO_*` — optional SMS delivery for OTP codes
+- `TRUST_PROXY` — number of reverse-proxy hops in front of the API (e.g. `1`), or `true`/a CIDR list. Rate limits key on the client IP, which comes from `X-Forwarded-For` only when this is set. Unset behind a proxy means every client shares the proxy's IP and therefore one rate-limit bucket; set too high means clients can spoof their IP. Verify after deploy (see below).
 
 ### Web (root)
 - `NEXT_PUBLIC_API_BASE_URL` — API base URL
@@ -34,6 +36,8 @@
 - Citizen can `POST /reports` without auth
 - Authenticated citizen report sets `reporterId` from JWT
 - Web `/admin` redirects unauthenticated users to `/login`
+- `TRUST_PROXY` is right: send two requests from different networks to `POST /auth/password-reset/request` and check that the logged `request completed` lines show different client IPs (not the load balancer's)
+- Password reset email arrives (check SendGrid activity if not)
 
 ## API versioning
 

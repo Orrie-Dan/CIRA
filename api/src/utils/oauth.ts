@@ -1,6 +1,8 @@
 import { OAuth2Client } from 'google-auth-library'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '../prisma.js'
+import { userRepository } from '../repositories/index.js'
+import { normalizeEmail } from './auth.js'
 
 export interface GoogleUserInfo {
   id: string
@@ -78,15 +80,25 @@ export async function verifyAppleToken(
 }
 
 /**
- * Find or create user from OAuth provider
+ * Find or create user from OAuth provider.
+ *
+ * Callers must only pass an email the provider has verified.
+ *
+ * Linking to an existing email account: if that account never verified its
+ * email, whoever set its password (and phone) never proved they own the
+ * address — it may be an attacker who pre-registered the victim's email.
+ * In that case the provider sign-in takes the account over: the password
+ * and phone are cleared and all existing sessions are revoked.
  */
 export async function findOrCreateOAuthUser(
   provider: 'google' | 'apple',
   providerId: string,
-  email: string,
+  rawEmail: string,
   fullName?: string,
   picture?: string
 ) {
+  const email = normalizeEmail(rawEmail)
+
   const existingUser = await prisma.userAccount.findFirst({
     where: {
       provider,
@@ -98,17 +110,27 @@ export async function findOrCreateOAuthUser(
     return existingUser
   }
 
-  const existingEmailUser = await prisma.userAccount.findUnique({
-    where: { email },
-  })
+  const existingEmailUser = await userRepository.findByEmail(email)
 
   if (existingEmailUser) {
+    if (existingEmailUser.emailVerified) {
+      return await prisma.userAccount.update({
+        where: { id: existingEmailUser.id },
+        data: { provider, providerId },
+      })
+    }
+
     return await prisma.userAccount.update({
       where: { id: existingEmailUser.id },
       data: {
         provider,
         providerId,
         emailVerified: true,
+        passwordHash: null,
+        phone: null,
+        phoneVerified: false,
+        fullName: fullName || existingEmailUser.fullName,
+        tokenVersion: { increment: 1 },
       },
     })
   }

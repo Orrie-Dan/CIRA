@@ -54,7 +54,7 @@ export const adminListReportsQuerySchema = z.object({
 })
 
 export const createUserSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
   fullName: z.string().max(200).optional(),
   phone: z.string().optional(),
@@ -66,14 +66,14 @@ export const updatePasswordSchema = z.object({
 })
 
 export const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
   fullName: z.string().max(200).optional(),
   phone: z.string().optional(),
 })
 
 export const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 })
 

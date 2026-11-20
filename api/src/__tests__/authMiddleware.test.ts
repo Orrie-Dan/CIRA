@@ -35,7 +35,7 @@ describe('requireRole', () => {
     const handler = requireRole('admin')
     const reply = mockReply()
     await handler(
-      mockRequest({ userId: '1', email: 'o@test.com', role: 'officer' }),
+      mockRequest({ userId: '1', email: 'o@test.com', role: 'officer', tv: 0 }),
       reply
     )
     expect(reply.statusCode).toBe(403)
@@ -45,7 +45,7 @@ describe('requireRole', () => {
     const handler = requireRole('admin', 'officer')
     const reply = mockReply()
     await handler(
-      mockRequest({ userId: '1', email: 'a@test.com', role: 'admin' }),
+      mockRequest({ userId: '1', email: 'a@test.com', role: 'admin', tv: 0 }),
       reply
     )
     expect(reply.statusCode).toBe(200)

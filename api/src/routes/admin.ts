@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
+import { userRepository } from '../repositories/index.js'
 import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
@@ -800,9 +801,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
     try {
       // Check if user with email already exists
-      const existing = await prisma.userAccount.findUnique({
-        where: { email: parsed.data.email },
-      })
+      const existing = await userRepository.findByEmail(parsed.data.email)
 
       if (existing) {
         return reply.code(409).send({
@@ -824,12 +823,15 @@ export async function adminRoutes(app: FastifyInstance) {
         fullName: string | null
         phone: string | null
         role: string
+        emailVerified: boolean
       } = {
         email: parsed.data.email,
         passwordHash,
         fullName: (parsed.data.fullName && parsed.data.fullName.trim().length > 0) ? parsed.data.fullName.trim() : null,
         phone: (parsed.data.phone && parsed.data.phone.trim().length > 0) ? parsed.data.phone.trim() : null,
         role: parsed.data.role || 'officer',
+        // Admin-provisioned accounts are vouched for; password login requires this.
+        emailVerified: true,
       }
 
       app.log.info({ ...userData, passwordHash: '[HIDDEN]' }, 'Creating user with data:')
@@ -932,10 +934,10 @@ export async function adminRoutes(app: FastifyInstance) {
       // Hash new password
       const passwordHash = await hashPassword(parsed.data.password)
 
-      // Update password
+      // Update password and revoke the user's existing sessions
       await prisma.userAccount.update({
         where: { id: userId },
-        data: { passwordHash },
+        data: { passwordHash, tokenVersion: { increment: 1 } },
       })
 
       app.log.info({ userId }, 'Password updated successfully for user:')

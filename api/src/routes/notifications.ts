@@ -9,9 +9,15 @@ import {
 } from '../utils/notifications.js'
 import { registerDeviceToken, unregisterDeviceToken } from '../utils/pushNotifications.js'
 import { ApiError } from '../utils/errors.js'
-import { authenticateUser } from '../utils/authMiddleware.js'
+import { authenticateUser, optionalAuthenticate, getAuthenticatedUser } from '../utils/authMiddleware.js'
+import { limits } from '../utils/rateLimit.js'
+import { randomBytes } from 'crypto'
+import * as ephemeralStore from '../services/ephemeralStore.js'
 import { zodToJsonSchemaFastify } from '../utils/swagger.js'
 import type { JWTPayload } from '../utils/auth.js'
+
+const SSE_TICKET_TTL_SECONDS = 60
+const sseTicketKey = (ticket: string) => `sse-ticket:${ticket}`
 
 // Store SSE connections per user
 const sseConnections = new Map<string, Set<{ send: (data: string) => void; close: () => void }>>()
@@ -268,6 +274,25 @@ export async function notificationsRoutes(app: FastifyInstance) {
     }
   })
 
+  // Issue a short-lived, single-use ticket for opening the SSE stream.
+  // EventSource cannot send an Authorization header, so the web client
+  // exchanges its JWT for a ticket and puts only the ticket in the URL
+  // (URLs end up in proxy/access logs; a long-lived JWT must not).
+  app.post('/notifications/stream-ticket', {
+    preHandler: authenticateUser,
+    config: { rateLimit: limits.sseTicket },
+    schema: {
+      description: 'Get a one-time ticket (valid 60s) for GET /notifications/stream',
+      tags: ['notifications'],
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }],
+    },
+  }, async (req: FastifyRequest, reply) => {
+    const user = req.user as JWTPayload
+    const ticket = randomBytes(32).toString('base64url')
+    await ephemeralStore.setWithTtl(sseTicketKey(ticket), user.userId, SSE_TICKET_TTL_SECONDS * 1000)
+    return reply.send({ ticket, expiresIn: SSE_TICKET_TTL_SECONDS })
+  })
+
   // Handle OPTIONS preflight for SSE endpoint
   app.options('/notifications/stream', async (req, reply) => {
     const origin = req.headers.origin
@@ -294,27 +319,22 @@ export async function notificationsRoutes(app: FastifyInstance) {
       querystring: {
         type: 'object',
         properties: {
-          token: { type: 'string' },
+          ticket: { type: 'string', description: 'One-time ticket from POST /notifications/stream-ticket' },
         },
       },
     },
-  }, async (req: FastifyRequest<{ Querystring: { token?: string } }>, reply) => {
-    // Support token in query string for SSE (EventSource doesn't support custom headers)
-    let user: JWTPayload | null = null
-    if (req.query.token) {
-      try {
-        const decoded = app.jwt.verify<JWTPayload>(req.query.token)
-        user = decoded as JWTPayload
-      } catch (err) {
-        // Fallback to header auth
-        await authenticateUser(req, reply)
-        user = (req.user as JWTPayload) || null
-      }
+    // Without a ticket, falls back to the session cookie / Bearer header.
+    preHandler: optionalAuthenticate,
+  }, async (req: FastifyRequest<{ Querystring: { ticket?: string } }>, reply) => {
+    let user: { userId: string } | null = null
+    if (req.query.ticket) {
+      const userId = await ephemeralStore.take(sseTicketKey(req.query.ticket))
+      user = userId ? { userId } : null
     } else {
-      await authenticateUser(req, reply)
-      user = (req.user as JWTPayload) || null
+      const sessionUser = getAuthenticatedUser(req)
+      user = sessionUser ? { userId: sessionUser.userId } : null
     }
-    
+
     if (!user) {
       return reply.code(401).send({
         error: {

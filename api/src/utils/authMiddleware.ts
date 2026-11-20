@@ -1,5 +1,6 @@
-import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify'
 import { JWTPayload } from './auth.js'
+import { prisma } from '../prisma.js'
 
 // Extend Fastify JWT types to properly type the payload
 declare module '@fastify/jwt' {
@@ -20,32 +21,53 @@ function getUser(request: FastifyRequest): JWTPayload | undefined {
   return getAuthenticatedUser(request)
 }
 
+/**
+ * Verifies a session JWT (signature + expiry) and checks it against the
+ * user's current token_version. Returns the payload with the role and
+ * email as currently stored, so demotions take effect immediately.
+ */
+export async function verifySessionToken(
+  app: FastifyInstance,
+  token: string
+): Promise<JWTPayload | null> {
+  let decoded: JWTPayload
+  try {
+    decoded = app.jwt.verify<JWTPayload>(token)
+  } catch {
+    return null
+  }
+
+  // Tokens issued before token versioning have no "tv" and never expired.
+  if (typeof decoded.tv !== 'number' || typeof decoded.userId !== 'string') return null
+
+  const user = await prisma.userAccount.findUnique({
+    where: { id: decoded.userId },
+    select: { id: true, email: true, role: true, tokenVersion: true },
+  })
+  if (!user || user.tokenVersion !== decoded.tv) return null
+
+  return { userId: user.id, email: user.email, role: user.role, tv: user.tokenVersion }
+}
+
+function getTokenFromRequest(request: FastifyRequest): string | undefined {
+  const authHeader = request.headers.authorization
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.substring(7)
+  }
+  return request.cookies?.token || undefined
+}
+
 async function verifyTokenFromRequest(
   request: FastifyRequest
 ): Promise<JWTPayload | null> {
-  let token = request.cookies.token
-
-  if (!token) {
-    const authHeader = request.headers.authorization
-    if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.substring(7)
-    }
-  }
-
+  const token = getTokenFromRequest(request)
   if (!token) return null
 
-  const originalToken = request.headers.authorization
-  request.headers.authorization = `Bearer ${token}`
-
-  try {
-    const decoded = await request.jwtVerify<JWTPayload>()
-    ;(request as AuthenticatedRequest).user = decoded
-    return decoded
-  } catch {
-    return null
-  } finally {
-    request.headers.authorization = originalToken || undefined
+  const user = await verifySessionToken(request.server, token)
+  if (user) {
+    ;(request as AuthenticatedRequest).user = user
   }
+  return user
 }
 
 export async function authenticateUser(
