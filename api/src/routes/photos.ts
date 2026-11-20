@@ -2,11 +2,37 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { prisma } from '../prisma.js'
 import { ApiError } from '../utils/errors.js'
 import { uploadToCloudinary, deleteFromCloudinary, extractPublicId } from '../utils/cloudinary.js'
+import { authenticateUser, getAuthenticatedUser } from '../utils/authMiddleware.js'
+
+async function canModifyReportPhotos(
+  reportId: string,
+  userId: string,
+  role: string
+): Promise<boolean> {
+  if (role === 'admin' || role === 'officer') return true
+
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    select: { reporterId: true },
+  })
+
+  return report?.reporterId === userId
+}
 
 export async function photosRoutes(app: FastifyInstance) {
   // Upload photo for a report
-  app.post('/reports/:reportId/photos', async (req: FastifyRequest<{ Params: { reportId: string } }>, reply) => {
-    const { reportId } = req.params
+  app.post('/reports/:reportId/photos', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
+    const { reportId } = req.params as { reportId: string }
+    const user = getAuthenticatedUser(req)
+    if (!user) {
+      return reply.code(401).send({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          requestId: req.id,
+        },
+      })
+    }
     
     // Verify report exists
     const report = await prisma.report.findUnique({
@@ -19,6 +45,17 @@ export async function photosRoutes(app: FastifyInstance) {
         error: {
           code: 'NOT_FOUND',
           message: 'Report not found',
+          requestId: req.id,
+        },
+      })
+    }
+
+    const allowed = await canModifyReportPhotos(reportId, user.userId, user.role)
+    if (!allowed) {
+      return reply.code(403).send({
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to upload photos for this report',
           requestId: req.id,
         },
       })
@@ -206,13 +243,23 @@ export async function photosRoutes(app: FastifyInstance) {
   })
 
   // Delete photo
-  app.delete('/photos/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
-    const { id } = req.params
+  app.delete('/photos/:id', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
+    const { id } = req.params as { id: string }
+    const user = getAuthenticatedUser(req)
+    if (!user) {
+      return reply.code(401).send({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+          requestId: req.id,
+        },
+      })
+    }
 
     try {
       const photo = await prisma.reportPhoto.findUnique({
         where: { id },
-        select: { id: true, url: true },
+        select: { id: true, url: true, reportId: true },
       })
 
       if (!photo) {
@@ -220,6 +267,17 @@ export async function photosRoutes(app: FastifyInstance) {
           error: {
             code: 'NOT_FOUND',
             message: 'Photo not found',
+            requestId: req.id,
+          },
+        })
+      }
+
+      const allowed = await canModifyReportPhotos(photo.reportId, user.userId, user.role)
+      if (!allowed) {
+        return reply.code(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You do not have permission to delete this photo',
             requestId: req.id,
           },
         })

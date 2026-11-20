@@ -3,19 +3,20 @@ import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { createReportSchema, updateReportStatusSchema, listReportsQuerySchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
-import { checkRateLimit, getClientIp } from '../utils/rateLimit.js'
+import { checkRateLimitAsync, getClientIp } from '../utils/rateLimit.js'
 import { zodToJsonSchemaFastify } from '../utils/swagger.js'
 import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
 import { getOfficersAndAdmins } from '../utils/notifications.js'
 import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
 import { broadcastNotificationToUser } from './notifications.js'
-import { authenticateUser } from '../utils/authMiddleware.js'
+import { authenticateUser, optionalAuthenticate, getAuthenticatedUser, reportMutationAuth } from '../utils/authMiddleware.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
-import { updateReportPriorityScore } from '../utils/reportPriority.js'
+import { createReportWithHistory } from '../services/reportService.js'
 
 export async function reportsRoutes(app: FastifyInstance) {
   // Create report
   app.post('/reports', {
+    preHandler: optionalAuthenticate,
     schema: {
       description: 'Create a new infrastructure report',
       tags: ['reports'],
@@ -67,7 +68,7 @@ export async function reportsRoutes(app: FastifyInstance) {
     },
   }, async (req: FastifyRequest, reply) => {
     const ip = getClientIp(req)
-    const limitCheck = checkRateLimit(ip)
+    const limitCheck = await checkRateLimitAsync(ip)
     if (!limitCheck.allowed) {
       return reply
         .code(429)
@@ -96,36 +97,26 @@ export async function reportsRoutes(app: FastifyInstance) {
     }
 
     try {
-      const report = await prisma.report.create({
-        data: {
-          title: parsed.data.title,
-          description: parsed.data.description,
-          type: parsed.data.type,
-          severity: parsed.data.severity,
-          status: 'new',
-          latitude: parsed.data.latitude,
-          longitude: parsed.data.longitude,
-          addressText: parsed.data.addressText,
-          province: parsed.data.province,
-          district: parsed.data.district,
-          sector: parsed.data.sector,
-          ...(parsed.data.reporterId && { reporterId: parsed.data.reporterId }),
-        },
-      })
+      const authenticatedUser = getAuthenticatedUser(req)
+      const reporterId = authenticatedUser?.userId
 
-      // Create initial status history entry
-      await prisma.reportStatusHistory.create({
-        data: {
-          reportId: report.id,
-          fromStatus: null,
-          toStatus: 'new',
-          note: 'Report created',
-        },
+      const report = await createReportWithHistory({
+        title: parsed.data.title,
+        description: parsed.data.description,
+        type: parsed.data.type,
+        severity: parsed.data.severity,
+        latitude: parsed.data.latitude,
+        longitude: parsed.data.longitude,
+        addressText: parsed.data.addressText,
+        province: parsed.data.province,
+        district: parsed.data.district,
+        sector: parsed.data.sector,
+        reporterId,
       })
 
       // Log audit event
       await logAuditEvent({
-        userId: parsed.data.reporterId || undefined,
+        userId: reporterId || undefined,
         action: AuditActions.REPORT_CREATED,
         resourceType: ResourceTypes.REPORT,
         resourceId: report.id,
@@ -312,12 +303,29 @@ export async function reportsRoutes(app: FastifyInstance) {
         }
       }
 
+      const orderBy = { createdAt: 'desc' as const }
+      const paginationArgs: {
+        take: number
+        skip: number
+        cursor?: { id: string }
+        orderBy: typeof orderBy
+      } = parsed.data.cursor
+        ? {
+            take: parsed.data.limit,
+            cursor: { id: parsed.data.cursor },
+            skip: 1,
+            orderBy,
+          }
+        : {
+            take: parsed.data.limit,
+            skip: parsed.data.offset,
+            orderBy,
+          }
+
       const [reports, total] = await Promise.all([
         prisma.report.findMany({
           where,
-          take: parsed.data.limit,
-          skip: parsed.data.offset,
-          orderBy: { createdAt: 'desc' },
+          ...paginationArgs,
           include: {
             photos: {
               select: {
@@ -387,11 +395,15 @@ export async function reportsRoutes(app: FastifyInstance) {
           
           return reportData
         }),
-        meta: {
-          total,
-          limit: parsed.data.limit,
-          offset: parsed.data.offset,
-        },
+          meta: {
+            total,
+            limit: parsed.data.limit,
+            offset: parsed.data.offset,
+            nextCursor:
+              reports.length === parsed.data.limit
+                ? reports[reports.length - 1]?.id
+                : null,
+          },
       }
       
       // Log the response to verify photos are included
@@ -587,6 +599,7 @@ export async function reportsRoutes(app: FastifyInstance) {
 
   // Update report status (creates history entry)
   app.patch('/reports/:id/status', {
+    ...reportMutationAuth,
     schema: {
       description: 'Update the status of a report',
       tags: ['reports'],
@@ -958,9 +971,6 @@ export async function reportsRoutes(app: FastifyInstance) {
       const count = await prisma.reportConfirmation.count({
         where: { reportId: id },
       })
-
-      // Update priority score based on new confirmation
-      await updateReportPriorityScore(id)
 
       // Log audit event
       await logAuditEvent({

@@ -10,6 +10,8 @@ export class ApiError extends Error {
   }
 }
 
+const isProduction = process.env.NODE_ENV === 'production'
+
 export function errorHandler(error: unknown, requestId: string) {
   if (error instanceof ApiError) {
     return {
@@ -54,8 +56,10 @@ export function errorHandler(error: unknown, requestId: string) {
     return {
       error: {
         code: 'INTERNAL_ERROR',
-        message: error.message || 'An unexpected error occurred',
-        details: error.stack,
+        message: isProduction
+          ? 'An unexpected error occurred'
+          : error.message || 'An unexpected error occurred',
+        ...(isProduction ? {} : { details: error.stack }),
         requestId,
       },
     }

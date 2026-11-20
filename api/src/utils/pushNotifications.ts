@@ -49,9 +49,12 @@ export async function registerDeviceToken(
 /**
  * Unregister a device token
  */
-export async function unregisterDeviceToken(token: string) {
+export async function unregisterDeviceToken(token: string, userId?: string) {
   return await prisma.deviceToken.deleteMany({
-    where: { token },
+    where: {
+      token,
+      ...(userId ? { userId } : {}),
+    },
   })
 }
 

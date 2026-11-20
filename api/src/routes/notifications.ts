@@ -98,7 +98,8 @@ export async function notificationsRoutes(app: FastifyInstance) {
     }
 
     try {
-      await unregisterDeviceToken(parsed.data.token)
+      const userId = (req.user as { userId: string }).userId
+      await unregisterDeviceToken(parsed.data.token, userId)
       return reply.send({ success: true })
     } catch (error) {
       app.log.error(error, 'Failed to unregister device token')
