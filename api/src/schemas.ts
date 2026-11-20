@@ -26,6 +26,7 @@ export const listReportsQuerySchema = z.object({
   myReports: z.coerce.boolean().optional(), // Filter to current user's reports
   limit: z.coerce.number().int().min(1).max(1000).default(200),
   offset: z.coerce.number().int().min(0).default(0),
+  cursor: z.string().uuid().optional(),
 })
 
 export const assignReportSchema = z.object({

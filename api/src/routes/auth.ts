@@ -143,8 +143,6 @@ export async function authRoutes(app: FastifyInstance) {
         user,
         requiresVerification: true,
         message: 'Account created. Please verify your email/phone with the OTP code sent to you.',
-        // In development, include OTP for testing
-        ...(process.env.NODE_ENV !== 'production' && { otp }),
       })
     } catch (error: any) {
       app.log.error({
@@ -290,6 +288,16 @@ export async function authRoutes(app: FastifyInstance) {
           error: {
             code: 'INVALID_CREDENTIALS',
             message: 'Invalid email or password',
+            requestId: req.id,
+          },
+        })
+      }
+
+      if (!user.emailVerified) {
+        return reply.code(403).send({
+          error: {
+            code: 'EMAIL_NOT_VERIFIED',
+            message: 'Please verify your email before logging in',
             requestId: req.id,
           },
         })
@@ -885,8 +893,6 @@ export async function authRoutes(app: FastifyInstance) {
 
       return reply.send({
         message: 'Verification code sent successfully',
-        // In development, include OTP for testing
-        ...(process.env.NODE_ENV !== 'production' && { otp }),
       })
     } catch (error) {
       app.log.error(error, 'Send OTP error:')

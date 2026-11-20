@@ -1,0 +1,6 @@
+# The API (api/, own pnpm lockfile, deployed from its own Docker context) and
+# the mobile app (mobile/, npm) are installed independently and are not part
+# of this workspace.
+packages:
+  - '.'
+  - 'packages/*'

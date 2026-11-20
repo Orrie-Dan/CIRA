@@ -47,7 +47,8 @@
           "photosPermission": "Allow CIRA to access your photos to attach images to reports."
         }
       ],
-      "expo-router"
+      "expo-router",
+      "expo-font"
     ],
     "extra": {
       "router": {},

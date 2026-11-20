@@ -4,7 +4,7 @@ import { prisma } from '../prisma.js'
 import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
-import { authenticateUser } from '../utils/authMiddleware.js'
+import { authenticateUser, staffAuth, adminAuth } from '../utils/authMiddleware.js'
 import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
 import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
 import { broadcastNotificationToUser } from './notifications.js'
@@ -12,7 +12,7 @@ import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger
 
 export async function adminRoutes(app: FastifyInstance) {
   // Get detailed report with all history, comments, and assignments
-  app.get('/admin/reports/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+  app.get('/admin/reports/:id', staffAuth, async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const { id } = req.params
     if (!z.string().uuid().safeParse(id).success) {
       return reply.code(400).send({
@@ -164,7 +164,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // List reports with admin filters
-  app.get('/admin/reports', async (req: FastifyRequest, reply) => {
+  app.get('/admin/reports', staffAuth, async (req: FastifyRequest, reply) => {
     app.log.info({ query: req.query }, 'Admin reports query:')
     const parsed = adminListReportsQuerySchema.safeParse(req.query)
     if (!parsed.success) {
@@ -305,7 +305,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Assign report to officer or organization
-  app.post('/admin/reports/:id/assign', async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
+  app.post('/admin/reports/:id/assign', adminAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
     app.log.info({ id, body: req.body }, 'Assign request:')
     
@@ -489,7 +489,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Add comment to report
-  app.post('/admin/reports/:id/comments', async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
+  app.post('/admin/reports/:id/comments', staffAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
     if (!z.string().uuid().safeParse(id).success) {
       return reply.code(400).send({
@@ -616,7 +616,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Update report status (with user tracking)
-  app.patch('/admin/reports/:id/status', async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
+  app.patch('/admin/reports/:id/status', staffAuth, async (req: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply) => {
     const { id } = req.params
     if (!z.string().uuid().safeParse(id).success) {
       return reply.code(400).send({
@@ -733,7 +733,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Get organizations list
-  app.get('/admin/organizations', async (req: FastifyRequest, reply) => {
+  app.get('/admin/organizations', adminAuth, async (req: FastifyRequest, reply) => {
     try {
       const organizations = await prisma.organization.findMany({
         orderBy: { name: 'asc' },
@@ -753,7 +753,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Get officers/users list
-  app.get('/admin/users', async (req: FastifyRequest, reply) => {
+  app.get('/admin/users', adminAuth, async (req: FastifyRequest, reply) => {
     try {
       const role = (req.query as any).role as string | undefined
       app.log.info({ role }, 'Fetching users with role:')
@@ -782,7 +782,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Create user/officer
-  app.post('/admin/users', async (req: FastifyRequest, reply) => {
+  app.post('/admin/users', adminAuth, async (req: FastifyRequest, reply) => {
     app.log.info({ body: req.body }, 'Creating user with data:')
     
     const parsed = createUserSchema.safeParse(req.body)
@@ -949,7 +949,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Auto-assign reports to available officers
-  app.post('/admin/reports/auto-assign', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
+  app.post('/admin/reports/auto-assign', adminAuth, async (req: FastifyRequest, reply) => {
     try {
       // Check authentication (should be handled by middleware, but double-check)
       if (!req.user) {
@@ -1114,7 +1114,7 @@ export async function adminRoutes(app: FastifyInstance) {
   })
 
   // Get officer metrics (cases and success rate)
-  app.get('/admin/officers/metrics', async (req: FastifyRequest, reply) => {
+  app.get('/admin/officers/metrics', staffAuth, async (req: FastifyRequest, reply) => {
     try {
       // Get all officers
       const officers = await prisma.userAccount.findMany({

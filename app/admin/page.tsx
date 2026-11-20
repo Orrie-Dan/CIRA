@@ -73,74 +73,21 @@ import {
 } from 'recharts'
 import { format } from 'date-fns'
 import dynamic from 'next/dynamic'
+import { RWANDA_PROVINCES } from '@cira/shared'
+import { useAdminAuth } from './_hooks/useAdminAuth'
+import { loadLeaflet, createSeverityIcon } from './_lib/map-utils'
 
-// Rwanda's 5 provinces (constant for all calculations)
-const RWANDA_PROVINCES = [
-  'Kigali City',
-  'Eastern Province',
-  'Northern Province',
-  'Southern Province',
-  'Western Province'
-] as const
-const TOTAL_RWANDA_PROVINCES = 5
+const TOTAL_RWANDA_PROVINCES = RWANDA_PROVINCES.length
 
-// Dynamically import map components to avoid SSR issues
 const MapContainer = dynamic(() => import('react-leaflet').then(mod => mod.MapContainer), { ssr: false })
 const TileLayer = dynamic(() => import('react-leaflet').then(mod => mod.TileLayer), { ssr: false })
 const Marker = dynamic(() => import('react-leaflet').then(mod => mod.Marker), { ssr: false })
 const Popup = dynamic(() => import('react-leaflet').then(mod => mod.Popup), { ssr: false })
 const CircleMarker = dynamic(() => import('react-leaflet').then(mod => mod.CircleMarker), { ssr: false })
 
-// Create custom icons based on severity - lazy load Leaflet only on client
-let leafletLoaded = false
-let L: any = null
-
-async function loadLeaflet() {
-  if (typeof window === 'undefined' || leafletLoaded) return L
-  
-  L = await import('leaflet')
-  // @ts-ignore - CSS import doesn't have type declarations
-  await import('leaflet/dist/leaflet.css')
-  
-  // Fix for default Leaflet icons when bundling
-  delete (L.Icon.Default.prototype as any)._getIconUrl
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-    iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-    shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-  })
-  
-  leafletLoaded = true
-  return L
-}
-
-function createSeverityIcon(severity: string) {
-  if (typeof window === 'undefined') {
-    // Return a placeholder during SSR
-    return null as any
-  }
-  
-  // Load Leaflet synchronously if not already loaded (for client-side)
-  if (!L && typeof window !== 'undefined') {
-    // This will be called during render, so we'll handle it in useEffect
-    return null as any
-  }
-  
-  if (!L) return null as any
-  
-  const color = severity === 'high' ? '#ef4444' : severity === 'medium' ? '#f97316' : '#2563eb'
-  return L.divIcon({
-    className: 'custom-marker',
-    html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  })
-}
-
 export default function AdminDashboard() {
   const router = useRouter()
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [authLoading, setAuthLoading] = useState(true)
+  const { isAuthenticated, authLoading } = useAdminAuth('admin')
   const [reports, setReports] = useState<AdminReport[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -199,26 +146,6 @@ export default function AdminDashboard() {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
   const reportsTableRef = useRef<HTMLDivElement>(null)
-
-  // Check authentication before rendering
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const { user } = await apiMe()
-        if (user.role !== 'admin') {
-          router.push('/login')
-          return
-        }
-        setIsAuthenticated(true)
-      } catch (error) {
-        console.error('Authentication failed:', error)
-        router.push('/login')
-      } finally {
-        setAuthLoading(false)
-      }
-    }
-    checkAuth()
-  }, [router])
 
   // Load Leaflet on client side only
   useEffect(() => {

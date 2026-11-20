@@ -8,6 +8,7 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import { reportsRoutes } from './routes/reports.js'
 import { errorHandler, ApiError } from './utils/errors.js'
+import { getRequiredSecret, validateProductionSecrets } from './utils/secrets.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -16,15 +17,30 @@ const __dirname = path.dirname(__filename)
 
 const port = Number(process.env.PORT || 3001)
 
+validateProductionSecrets()
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    startTime?: number
+  }
+}
+
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL || 'info',
     serializers: {
       req(request) {
+        const headers = { ...request.headers }
+        if (headers.authorization) {
+          headers.authorization = '[REDACTED]'
+        }
+        if (headers.cookie) {
+          headers.cookie = '[REDACTED]'
+        }
         return {
           method: request.method,
           url: request.url,
-          headers: request.headers,
+          headers,
         }
       },
     },
@@ -36,14 +52,26 @@ const app = Fastify({
   bodyLimit: 10 * 1024 * 1024, // 10MB body limit
 })
 
+app.addHook('onRequest', async (request) => {
+  request.startTime = Date.now()
+})
+
+app.addHook('onResponse', async (request, reply) => {
+  const durationMs = request.startTime ? Date.now() - request.startTime : undefined
+  request.log.info(
+    { statusCode: reply.statusCode, durationMs, method: request.method, url: request.url },
+    'request completed'
+  )
+})
+
 // JWT
 await app.register(jwt, {
-  secret: process.env.JWT_SECRET ||,
+  secret: getRequiredSecret('JWT_SECRET'),
 })
 
 // Cookie
 await app.register(cookie, {
-  secret: process.env.COOKIE_SECRET || ,
+  secret: getRequiredSecret('COOKIE_SECRET'),
 })
 
 // Swagger/OpenAPI Documentation

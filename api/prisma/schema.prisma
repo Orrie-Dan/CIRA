@@ -71,6 +71,8 @@ model Report {
   confirmations ReportConfirmation[]
   qcSlip        QcSlip?
 
+  @@index([status, createdAt])
+  @@index([reporterId])
   @@map("report")
 }
 

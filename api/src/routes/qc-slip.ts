@@ -250,7 +250,7 @@ export async function qcSlipRoutes(app: FastifyInstance) {
         }
 
         // Check if already approved/rejected
-        if (qcSlip.approved !== null && qcSlip.approvedBy !== null) {
+        if (qcSlip.approvedBy !== null) {
           return reply.code(409).send({
             error: {
               code: 'ALREADY_APPROVED',

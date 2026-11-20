@@ -1,5 +1,6 @@
+import { OAuth2Client } from 'google-auth-library'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '../prisma.js'
-import type { FastifyInstance } from 'fastify'
 
 export interface GoogleUserInfo {
   id: string
@@ -10,7 +11,7 @@ export interface GoogleUserInfo {
 }
 
 export interface AppleUserInfo {
-  sub: string // Apple user ID
+  sub: string
   email: string
   email_verified?: boolean
   name?: {
@@ -19,62 +20,60 @@ export interface AppleUserInfo {
   }
 }
 
-/**
- * Verify Google OAuth token and get user info
- */
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
+const appleJwks = createRemoteJWKSet(
+  new URL('https://appleid.apple.com/auth/keys')
+)
+
 export async function verifyGoogleToken(
   idToken: string
 ): Promise<GoogleUserInfo> {
-  try {
-    // In production, use Google's token verification
-    // For now, we'll use a simple fetch to Google's userinfo endpoint
-    // In a real implementation, verify the JWT token properly
-    const response = await fetch(
-      `https://www.googleapis.com/oauth2/v3/userinfo?access_token=${idToken}`
-    )
+  const clientId = process.env.GOOGLE_CLIENT_ID
+  if (!clientId) {
+    throw new Error('GOOGLE_CLIENT_ID is not configured')
+  }
 
-    if (!response.ok) {
-      throw new Error('Failed to verify Google token')
-    }
+  const ticket = await googleClient.verifyIdToken({
+    idToken,
+    audience: clientId,
+  })
 
-    const userInfo = await response.json()
-    return userInfo as GoogleUserInfo
-  } catch (error) {
-    throw new Error(`Google token verification failed: ${error}`)
+  const payload = ticket.getPayload()
+  if (!payload?.sub || !payload.email) {
+    throw new Error('Invalid Google token payload')
+  }
+
+  return {
+    id: payload.sub,
+    email: payload.email,
+    verified_email: payload.email_verified === true,
+    name: payload.name,
+    picture: payload.picture,
   }
 }
 
-/**
- * Verify Apple OAuth token and get user info
- * Apple uses JWT tokens that need to be verified with Apple's public keys
- */
 export async function verifyAppleToken(
   idToken: string
 ): Promise<AppleUserInfo> {
-  try {
-    // Apple Sign In uses JWT tokens
-    // In production, verify the JWT using Apple's public keys
-    // For now, decode the JWT payload (not secure, but works for development)
-    // In production, use a library like 'jsonwebtoken' with Apple's public keys
-    
-    // Decode JWT payload (base64url)
-    const parts = idToken.split('.')
-    if (parts.length !== 3) {
-      throw new Error('Invalid Apple token format')
-    }
+  const clientId = process.env.APPLE_CLIENT_ID
+  if (!clientId) {
+    throw new Error('APPLE_CLIENT_ID is not configured')
+  }
 
-    const payload = JSON.parse(
-      Buffer.from(parts[1], 'base64url').toString('utf-8')
-    )
+  const { payload } = await jwtVerify(idToken, appleJwks, {
+    issuer: 'https://appleid.apple.com',
+    audience: clientId,
+  })
 
-    return {
-      sub: payload.sub,
-      email: payload.email,
-      email_verified: payload.email_verified,
-      name: payload.name,
-    } as AppleUserInfo
-  } catch (error) {
-    throw new Error(`Apple token verification failed: ${error}`)
+  if (!payload.sub || typeof payload.email !== 'string') {
+    throw new Error('Invalid Apple token payload')
+  }
+
+  return {
+    sub: payload.sub,
+    email: payload.email,
+    email_verified:
+      payload.email_verified === true || payload.email_verified === 'true',
   }
 }
 
@@ -88,9 +87,6 @@ export async function findOrCreateOAuthUser(
   fullName?: string,
   picture?: string
 ) {
-  // Check if user exists with this provider
-  // Note: Prisma doesn't support composite unique constraints with nulls well
-  // So we use findFirst instead
   const existingUser = await prisma.userAccount.findFirst({
     where: {
       provider,
@@ -102,32 +98,31 @@ export async function findOrCreateOAuthUser(
     return existingUser
   }
 
-  // Check if user exists with this email (account linking)
   const existingEmailUser = await prisma.userAccount.findUnique({
     where: { email },
   })
 
   if (existingEmailUser) {
-    // Link OAuth provider to existing account
     return await prisma.userAccount.update({
       where: { id: existingEmailUser.id },
       data: {
         provider,
         providerId,
+        emailVerified: true,
       },
     })
   }
 
-  // Create new user
   return await prisma.userAccount.create({
     data: {
       email,
       fullName: fullName || null,
+      avatarUrl: picture || null,
       provider,
       providerId,
-      role: 'citizen', // Default role
-      passwordHash: null, // No password for OAuth users
+      role: 'citizen',
+      passwordHash: null,
+      emailVerified: true,
     },
   })
 }
-
