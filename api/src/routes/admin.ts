@@ -12,6 +12,7 @@ import { changeReportStatus, applyStatusChange, notifyStatusChange, notifyAssign
 import { getReportNotificationRecipients } from '../utils/notifications.js'
 import { enqueueNotification } from '../services/notificationDispatcher.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
+import { assertPhoneAvailable, isPhoneUniqueViolation, phoneInUseError } from '../services/phoneService.js'
 
 export async function adminRoutes(app: FastifyInstance) {
   // Get detailed report with all history, comments, and assignments
@@ -602,6 +603,10 @@ export async function adminRoutes(app: FastifyInstance) {
         })
       }
 
+      if (input.phone) {
+        await assertPhoneAvailable(input.phone)
+      }
+
       // Hash password
       const passwordHash = await hashPassword(input.password)
 
@@ -617,7 +622,7 @@ export async function adminRoutes(app: FastifyInstance) {
         email: input.email,
         passwordHash,
         fullName: (input.fullName && input.fullName.trim().length > 0) ? input.fullName.trim() : null,
-        phone: (input.phone && input.phone.trim().length > 0) ? input.phone.trim() : null,
+        phone: input.phone ?? null, // normalized by createUserSchema
         role: input.role || 'officer',
         // Admin-provisioned accounts are vouched for; password login requires this.
         emailVerified: true,
@@ -650,6 +655,8 @@ export async function adminRoutes(app: FastifyInstance) {
 
       return reply.code(201).send({ data: user })
     } catch (error: any) {
+      if (error instanceof ApiError) throw error
+      if (isPhoneUniqueViolation(error)) throw phoneInUseError()
       app.log.error({ error, stack: error.stack }, 'Failed to create user')
       if (error.code === 'P2002') {
         // Prisma unique constraint violation

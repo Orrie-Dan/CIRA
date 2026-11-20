@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { optionalPhoneSchema } from './utils/phone.js'
 
 export const createReportSchema = z.object({
   title: z.string().min(3).max(200),
@@ -56,7 +57,7 @@ export const createUserSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
   fullName: z.string().max(200).optional(),
-  phone: z.string().optional(),
+  phone: optionalPhoneSchema,
   role: z.enum(['citizen', 'officer', 'admin']).default('officer'),
 })
 
@@ -72,7 +73,7 @@ export const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
   fullName: z.string().max(200).optional(),
-  phone: z.string().optional(),
+  phone: optionalPhoneSchema,
 })
 
 export const loginSchema = z.object({

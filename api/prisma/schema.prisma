@@ -64,7 +64,7 @@ model UserAccount {
   email           String                @unique
   passwordHash    String?               @map("password_hash") // Optional for OAuth users
   fullName        String?               @map("full_name")
-  phone           String?
+  phone           String?               @unique
   role            UserRole              @default(citizen)
   provider        String? // 'google', 'apple', or null for email/password
   providerId      String?               @map("provider_id") // OAuth provider's user ID

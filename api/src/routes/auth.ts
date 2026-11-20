@@ -6,10 +6,12 @@ import { prisma } from '../prisma.js'
 import { registerSchema, loginSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { hashPassword, verifyPassword, normalizeEmail, JWTPayload } from '../utils/auth.js'
-import { authenticateUser } from '../utils/authMiddleware.js'
+import { authenticateUser, requireAuthenticatedUser } from '../utils/authMiddleware.js'
 import { issueSession, clearSessionCookie, revokeAllSessions } from '../utils/session.js'
 import { limits } from '../utils/rateLimit.js'
 import { userRepository } from '../repositories/index.js'
+import { normalizePhone, phoneSchema, optionalPhoneSchema } from '../utils/phone.js'
+import { assertPhoneAvailable, claimVerifiedPhone, isPhoneUniqueViolation, phoneInUseError } from '../services/phoneService.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import {
   verifyGoogleToken,
@@ -67,6 +69,10 @@ export async function authRoutes(app: FastifyInstance) {
         })
       }
 
+      if (parsed.data.phone) {
+        await assertPhoneAvailable(parsed.data.phone)
+      }
+
       // Hash password and create user (unverified initially)
       const passwordHash = await hashPassword(parsed.data.password)
 
@@ -85,9 +91,7 @@ export async function authRoutes(app: FastifyInstance) {
         fullName: parsed.data.fullName && parsed.data.fullName.trim().length > 0 
           ? parsed.data.fullName.trim() 
           : null,
-        phone: parsed.data.phone && parsed.data.phone.trim().length > 0 
-          ? parsed.data.phone.trim() 
-          : null,
+        phone: parsed.data.phone ?? null, // normalized by registerSchema
         role: 'citizen', // Default role for self-registration
         provider: null,
         providerId: null,
@@ -145,7 +149,10 @@ export async function authRoutes(app: FastifyInstance) {
         message: error?.message,
         stack: error?.stack,
       }, 'Registration error:')
-      
+
+      if (error instanceof ApiError) throw error
+      if (isPhoneUniqueViolation(error)) throw phoneInUseError()
+
       // Provide more specific error messages
       if (error.code === 'P2002') {
         // Prisma unique constraint violation
@@ -351,22 +358,27 @@ export async function authRoutes(app: FastifyInstance) {
   app.put('/auth/profile', { preHandler: authenticateUser }, async (req: FastifyRequest, reply) => {
     const updateProfileSchema = z.object({
       fullName: z.string().min(1).max(255).optional(),
-      phone: z.string().max(20).optional(),
+      phone: optionalPhoneSchema,
     })
 
     const input = parseOrThrow(updateProfileSchema, req.body)
+    const userId = (req.user as JWTPayload).userId
+
+    const updateData: { fullName?: string; phone?: string | null; phoneVerified?: boolean } = {}
+    if (input.fullName !== undefined) {
+      updateData.fullName = input.fullName
+    }
+    if (input.phone !== undefined) {
+      const current = await prisma.userAccount.findUnique({ where: { id: userId }, select: { phone: true } })
+      if (input.phone !== current?.phone) {
+        if (input.phone) await assertPhoneAvailable(input.phone, userId)
+        updateData.phone = input.phone
+        // A new number has to be verified again (POST /auth/phone/verify).
+        updateData.phoneVerified = false
+      }
+    }
 
     try {
-      const userId = (req.user as JWTPayload).userId
-      
-      const updateData: { fullName?: string; phone?: string | null } = {}
-      if (input.fullName !== undefined) {
-        updateData.fullName = input.fullName
-      }
-      if (input.phone !== undefined) {
-        updateData.phone = input.phone || null
-      }
-
       const user = await prisma.userAccount.update({
         where: { id: userId },
         data: updateData,
@@ -375,6 +387,7 @@ export async function authRoutes(app: FastifyInstance) {
           email: true,
           fullName: true,
           phone: true,
+          phoneVerified: true,
           role: true,
           avatarUrl: true,
           createdAt: true,
@@ -392,6 +405,7 @@ export async function authRoutes(app: FastifyInstance) {
 
       return reply.send({ user })
     } catch (error) {
+      if (isPhoneUniqueViolation(error)) throw phoneInUseError()
       app.log.error(error, 'Update profile error:')
       throw new ApiError(500, 'Failed to update profile', 'UPDATE_FAILED')
     }
@@ -767,14 +781,19 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      const identifier = input.email || input.phone!
-
-      // Find user by email or phone
+      // Email wins when both are given (the mobile verify screen sends both).
+      // A phone code is a login, so it only goes to a number the account holder
+      // verified while signed in; unknown, unverified or malformed numbers get
+      // the same answer as a missing account.
+      const phone = input.email ? null : normalizePhone(input.phone!)
+      const identifier = input.email || phone
       const user = input.email
         ? await userRepository.findByEmail(input.email)
-        : await prisma.userAccount.findFirst({ where: { phone: input.phone } })
+        : phone
+          ? await prisma.userAccount.findFirst({ where: { phone, phoneVerified: true } })
+          : null
 
-      if (!user) {
+      if (!user || !identifier) {
         // Don't reveal if user exists (security best practice)
         return reply.send({
           message: 'If an account exists, a verification code has been sent.',
@@ -828,8 +847,11 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      const identifier = input.email || input.phone!
-      const verification = await verifyOtpRecord(identifier, input.code, 'verification')
+      const phone = input.email ? null : normalizePhone(input.phone!)
+      const identifier = input.email || phone
+      const verification = identifier
+        ? await verifyOtpRecord(identifier, input.code, 'verification')
+        : { valid: false as const, userId: undefined, error: undefined }
 
       if (!verification.valid) {
         return reply.code(400).send({
@@ -841,38 +863,49 @@ export async function authRoutes(app: FastifyInstance) {
         })
       }
 
-      // Only the channel the code was delivered to is verified
-      // (identifier is the email when one was given, else the phone).
-      const updateData: { emailVerified?: boolean; phoneVerified?: boolean } = input.email
-        ? { emailVerified: true }
-        : { phoneVerified: true }
+      const userSelect = {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        role: true,
+        emailVerified: true,
+        phoneVerified: true,
+        createdAt: true,
+        tokenVersion: true,
+      } as const
 
-      const updatedUser = await prisma.userAccount.update({
-        where: { id: verification.userId! },
-        data: updateData,
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          phone: true,
-          role: true,
-          emailVerified: true,
-          phoneVerified: true,
-          createdAt: true,
-          tokenVersion: true,
-        },
-      })
+      let account
+      if (input.email) {
+        // An email code verifies the email.
+        account = await prisma.userAccount.update({
+          where: { id: verification.userId! },
+          data: { emailVerified: true },
+          select: userSelect,
+        })
+        await logAuditEvent({
+          userId: account.id,
+          action: AuditActions.USER_PROFILE_UPDATED,
+          resourceType: ResourceTypes.USER,
+          resourceId: account.id,
+          details: { verification: { emailVerified: true } },
+        })
+      } else {
+        // A phone code is only a login, and only while the number is still this
+        // account's verified number (it may have changed since the code was sent).
+        // Numbers are verified while signed in: POST /auth/phone/verify.
+        account = await prisma.userAccount.findFirst({
+          where: { id: verification.userId!, phone: phone!, phoneVerified: true },
+          select: userSelect,
+        })
+        if (!account) {
+          return reply.code(400).send({
+            error: { code: 'INVALID_OTP', message: 'Invalid or expired verification code', requestId: req.id },
+          })
+        }
+      }
 
-      const { tokenVersion, ...user } = updatedUser
-
-      // Log audit event
-      await logAuditEvent({
-        userId: user.id,
-        action: AuditActions.USER_PROFILE_UPDATED,
-        resourceType: ResourceTypes.USER,
-        resourceId: user.id,
-        details: { verification: updateData },
-      })
+      const { tokenVersion, ...user } = account
 
       // Same rule as password login: no session until the email is verified
       // (a phone code alone does not prove ownership of the account email).
@@ -891,6 +924,64 @@ export async function authRoutes(app: FastifyInstance) {
       app.log.error(error, 'Verify OTP error:')
       throw new ApiError(500, 'Failed to verify code', 'VERIFY_OTP_FAILED')
     }
+  })
+
+  // Phone verification happens while signed in, so the code proves both that
+  // the caller holds the number and that they own the account. Codes are keyed
+  // per user and number, so two people verifying the same number can't
+  // overwrite each other's code.
+  const phoneCodeKey = (userId: string, phone: string) => `${userId}:${phone}`
+  const phoneBodySchema = z.object({ phone: phoneSchema })
+
+  app.post('/auth/phone/send-code', { preHandler: authenticateUser, config: { rateLimit: limits.sendCode } }, async (req: FastifyRequest, reply) => {
+    const { phone } = parseOrThrow(phoneBodySchema, req.body)
+    const { userId } = requireAuthenticatedUser(req)
+
+    const holder = await prisma.userAccount.findUnique({ where: { phone }, select: { id: true, phoneVerified: true } })
+    if (holder && holder.id === userId && holder.phoneVerified) {
+      return reply.send({ message: 'This phone number is already verified.', alreadyVerified: true })
+    }
+    if (holder && holder.id !== userId && holder.phoneVerified) {
+      throw phoneInUseError()
+    }
+
+    const otp = generateOtpCode()
+    await storeOtpRecord(phoneCodeKey(userId, phone), otp, userId, 'phone_verification')
+    try {
+      await sendOTPViaSMS(phone, otp)
+    } catch (error) {
+      app.log.error(error, 'Failed to send phone verification code:')
+    }
+
+    return reply.send({ message: 'A verification code has been sent to this number.' })
+  })
+
+  app.post('/auth/phone/verify', { preHandler: authenticateUser, config: { rateLimit: limits.verifyCode } }, async (req: FastifyRequest, reply) => {
+    const { phone, code } = parseOrThrow(phoneBodySchema.extend({ code: z.string().length(6) }), req.body)
+    const { userId } = requireAuthenticatedUser(req)
+
+    const verification = await verifyOtpRecord(phoneCodeKey(userId, phone), code, 'phone_verification')
+    if (!verification.valid || verification.userId !== userId) {
+      return reply.code(400).send({
+        error: {
+          code: 'INVALID_OTP',
+          message: verification.error || 'Invalid or expired verification code',
+          requestId: req.id,
+        },
+      })
+    }
+
+    const { user, releasedFromUserId } = await claimVerifiedPhone(userId, phone)
+
+    await logAuditEvent({
+      userId,
+      action: AuditActions.USER_PROFILE_UPDATED,
+      resourceType: ResourceTypes.USER,
+      resourceId: userId,
+      details: { verification: { phoneVerified: true }, ...(releasedFromUserId ? { phoneReleasedFromUserId: releasedFromUserId } : {}) },
+    })
+
+    return reply.send({ user, verified: true })
   })
 }
 
