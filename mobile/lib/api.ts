@@ -200,8 +200,16 @@ class ApiClient {
   }
 
   async getCurrentUser(): Promise<{ user: User }> {
-    const response = await this.client.get<{ user: User }>('/auth/me');
-    return response.data;
+    try {
+      const response = await this.client.get<{ user: User }>('/auth/me');
+      return response.data;
+    } catch (error: any) {
+      // Expired or revoked session: drop the stale token
+      if (error.response?.status === 401) {
+        await this.clearToken();
+      }
+      throw error;
+    }
   }
 
   async uploadAvatar(uri: string): Promise<{ user: User }> {
