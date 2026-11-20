@@ -4,7 +4,7 @@ import { PrismaClient, type Prisma } from '@prisma/client'
 /**
  * Runs against a real, disposable Postgres when DATABASE_TEST_URL is set, e.g.
  *   docker run -d --rm --name cira-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=cira_test -p 55432:5432 postgres:16-alpine
- *   DATABASE_URL=postgresql://postgres:test@localhost:55432/cira_test npx prisma db push --skip-generate
+ *   DATABASE_URL=postgresql://postgres:test@localhost:55432/cira_test npx prisma migrate deploy
  *   DATABASE_TEST_URL=postgresql://postgres:test@localhost:55432/cira_test pnpm test
  * The test deletes all reports, users and audit rows in that database.
  */

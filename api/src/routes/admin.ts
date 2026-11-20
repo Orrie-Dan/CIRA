@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { parseOrThrow, assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
+import type { UserRole } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { userRepository } from '../repositories/index.js'
-import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema } from '../schemas.js'
+import { assignReportSchema, addCommentSchema, adminListReportsQuerySchema, updateReportStatusSchema, createUserSchema, updatePasswordSchema, listUsersQuerySchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
 import { hashPassword } from '../utils/auth.js'
 import { authenticateUser, staffAuth, adminAuth, requireAuthenticatedUser } from '../utils/authMiddleware.js'
@@ -567,8 +568,8 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // Get officers/users list
   app.get('/admin/users', adminAuth, async (req: FastifyRequest, reply) => {
+    const { role } = parseOrThrow(listUsersQuerySchema, req.query, 'Invalid query parameters')
     try {
-      const role = (req.query as any).role as string | undefined
       app.log.info({ role }, 'Fetching users with role:')
       const where = role ? { role } : {}
 
@@ -623,7 +624,7 @@ export async function adminRoutes(app: FastifyInstance) {
         passwordHash: string
         fullName: string | null
         phone: string | null
-        role: string
+        role: UserRole
         emailVerified: boolean
       } = {
         email: input.email,

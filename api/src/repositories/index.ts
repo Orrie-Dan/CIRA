@@ -1,5 +1,5 @@
 import { prisma } from '../prisma.js'
-import type { Prisma } from '@prisma/client'
+import type { Prisma, UserRole } from '@prisma/client'
 import { normalizeEmail } from '../utils/auth.js'
 
 export const reportRepository = {
@@ -43,7 +43,7 @@ export const userRepository = {
     return prisma.userAccount.findUnique({ where: { id } })
   },
 
-  listByRole(role: string) {
+  listByRole(role: UserRole) {
     return prisma.userAccount.findMany({ where: { role } })
   },
 

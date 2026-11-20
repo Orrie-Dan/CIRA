@@ -23,7 +23,7 @@
 
 ## Deploy sequence
 
-1. Run database migrations: `cd api && pnpm prisma:deploy`
+1. Run database migrations: `cd api && pnpm prisma:deploy` (on an empty database; there is a single `0_init` baseline, and databases created before it must be recreated)
 2. Create initial admin: `cd api && pnpm create-admin admin@example.com 'secure-password'`
 3. Deploy API (Render/Docker): health check `GET /health`
 4. Deploy web (Vercel): set env vars, build with `pnpm build`
