@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
  * email is mocked, to capture OTP codes.
  *
  *   docker run -d --rm --name cira-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=cira_test -p 55432:5432 postgres:16-alpine
- *   DATABASE_URL=postgresql://postgres:test@localhost:55432/cira_test npx prisma db push --skip-generate
+ *   DATABASE_URL=postgresql://postgres:test@localhost:55432/cira_test npx prisma migrate deploy
  *   DATABASE_TEST_URL=postgresql://postgres:test@localhost:55432/cira_test pnpm test
  *
  * The test deletes all users and reports in that database.

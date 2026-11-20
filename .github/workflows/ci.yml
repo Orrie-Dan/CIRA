@@ -68,8 +68,12 @@ jobs:
         working-directory: api
       - run: pnpm prisma:generate
       - run: pnpm typecheck
-      - name: Create test database schema
-        run: pnpm exec prisma db push --skip-generate
+      - name: Apply migrations to test database
+        run: pnpm exec prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ env.DATABASE_TEST_URL }}
+      - name: Fail if migrations drift from schema.prisma
+        run: pnpm exec prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
         env:
           DATABASE_URL: ${{ env.DATABASE_TEST_URL }}
       - run: pnpm test

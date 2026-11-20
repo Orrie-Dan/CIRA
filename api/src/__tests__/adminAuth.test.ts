@@ -77,4 +77,40 @@ describe('admin route auth', () => {
 
     expect(response.statusCode).toBe(403)
   })
+
+  describe('GET /admin/users role filter', () => {
+    function adminToken() {
+      vi.mocked(prisma.userAccount.findUnique).mockResolvedValueOnce({
+        id: 'admin-1',
+        email: 'admin@test.com',
+        role: 'admin',
+        tokenVersion: 0,
+      } as never)
+      return app.jwt.sign({ userId: 'admin-1', email: 'admin@test.com', role: 'admin', tv: 0 })
+    }
+
+    it('rejects an unknown role with 400 without querying the database', async () => {
+      vi.mocked(prisma.userAccount.findMany).mockClear()
+      const response = await app.inject({
+        method: 'GET',
+        url: '/admin/users?role=superuser',
+        headers: { authorization: `Bearer ${adminToken()}` },
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(prisma.userAccount.findMany).not.toHaveBeenCalled()
+    })
+
+    it('filters by a valid role', async () => {
+      vi.mocked(prisma.userAccount.findMany).mockClear()
+      const response = await app.inject({
+        method: 'GET',
+        url: '/admin/users?role=officer',
+        headers: { authorization: `Bearer ${adminToken()}` },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(vi.mocked(prisma.userAccount.findMany).mock.calls[0][0]).toMatchObject({ where: { role: 'officer' } })
+    })
+  })
 })

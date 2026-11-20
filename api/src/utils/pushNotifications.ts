@@ -1,3 +1,4 @@
+import type { DevicePlatform } from '@prisma/client'
 import { prisma } from '../prisma.js'
 
 const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send'
@@ -17,7 +18,7 @@ export interface PushNotificationPayload {
 export async function registerDeviceToken(
   userId: string,
   token: string,
-  platform: string
+  platform: DevicePlatform
 ) {
   // Check if token already exists
   const existing = await prisma.deviceToken.findUnique({

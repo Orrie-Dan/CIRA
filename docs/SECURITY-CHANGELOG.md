@@ -1,5 +1,15 @@
 # Security Changelog
 
+## Phase 2: database baseline and enums
+
+### Migrations
+- The hand-written `.sql` files in `api/prisma/migrations` had drifted from `schema.prisma` (for example, status `pending` instead of `new`, a `photo` table instead of `report_photo`, missing tables). They are replaced by one Prisma migration, `0_init`, generated from the schema. CI now builds its test database with `prisma migrate deploy` and fails if the migrations differ from `schema.prisma`.
+- Existing local databases don't match the baseline. Recreate them with `cd api && npx prisma migrate reset`, which **deletes all data** in that database.
+
+### Enums
+- `user_account.role`, `report.type`, `report.severity`, `report.status`, `report_status_history.from_status`/`to_status` and `device_token.platform` are now Postgres enums, so the database rejects values outside the allowed lists. Before, they were free text with no constraint.
+- `GET /admin/users?role=` validates `role` (`citizen`, `officer`, `admin`); any other value returns 400. Before, an unknown role returned an empty list.
+
 ## Phase 3: API and web
 
 ### Staff comments

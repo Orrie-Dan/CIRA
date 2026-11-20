@@ -1,11 +1,12 @@
+import type { ReportType, ReportSeverity } from '@prisma/client'
 import { reportRepository } from '../repositories/index.js'
 import { prisma } from '../prisma.js'
 
 export interface CreateReportInput {
   title: string
   description: string
-  type: string
-  severity: string
+  type: ReportType
+  severity: ReportSeverity
   latitude: number
   longitude: number
   addressText?: string

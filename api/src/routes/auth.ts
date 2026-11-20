@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { parseOrThrow } from '../utils/validation.js'
 import { z } from 'zod'
+import type { UserRole } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { registerSchema, loginSchema } from '../schemas.js'
 import { ApiError } from '../utils/errors.js'
@@ -75,7 +76,7 @@ export async function authRoutes(app: FastifyInstance) {
         passwordHash: string
         fullName: string | null
         phone: string | null
-        role: string
+        role: UserRole
         provider: null
         providerId: null
       } = {

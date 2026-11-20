@@ -60,6 +60,10 @@ export const createUserSchema = z.object({
   role: z.enum(['citizen', 'officer', 'admin']).default('officer'),
 })
 
+export const listUsersQuerySchema = z.object({
+  role: z.enum(['citizen', 'officer', 'admin']).optional(),
+})
+
 export const updatePasswordSchema = z.object({
   password: z.string().min(8).max(100),
 })
