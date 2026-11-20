@@ -9,6 +9,8 @@ const createJestConfig = nextJest({
 const customJestConfig = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   testEnvironment: 'jest-environment-jsdom',
+  // api/ (vitest), mobile/ (own jest config) and e2e/ (Playwright) run separately.
+  testPathIgnorePatterns: ['/node_modules/', '/.next/', '<rootDir>/api/', '<rootDir>/mobile/', '<rootDir>/e2e/'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
   },

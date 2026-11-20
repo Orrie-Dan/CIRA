@@ -55,24 +55,11 @@ mobile/*.p12
 mobile/*.key
 mobile/*.mobileprovision
 
-# Test files and coverage
-__tests__/
-**/__tests__/
-*.test.ts
-*.test.tsx
-*.test.js
-*.test.jsx
-*.spec.ts
-*.spec.tsx
-*.spec.js
-*.spec.jsx
+# Test coverage output
 coverage/
 .nyc_output/
 **/coverage/
 *.lcov
-jest.config.js
-jest.setup.js
-vitest.config.ts
 
 # Temporary files
 *.tmp
