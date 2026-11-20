@@ -20,6 +20,7 @@
 - In-app, push and SSE notifications are sent after the response by an in-process dispatcher, so slow or failing push delivery no longer delays or fails requests. Delivery is best-effort (as before); on SIGTERM/SIGINT the server stops accepting requests and finishes queued notifications before exiting.
 - Push: one device-token query per notification and Expo requests batched at 100 messages with a 10 s timeout (was one query + one unbounded request per recipient).
 - The citizen comment notification now also goes out over SSE, like the other notification types.
+- Assigning a report (manually or with auto-assign) now notifies the reporter that it is `assigned`, like every other status change. The assigned officer gets only "Report Assigned to You", not a second status notification. Auto-assign now also sends the officer that notification; before, it notified no one. Re-assigning a report that is already past triage changes no status, so the reporter isn't told.
 
 ### Geocoding (Nominatim)
 - Requests to Nominatim are serialized and spaced at least 1 s apart, per its usage policy (reverse geocoding used to fire 3 requests 100 ms apart), with an 8 s timeout.

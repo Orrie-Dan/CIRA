@@ -19,6 +19,9 @@ export default defineConfig({
       ],
     },
     testTimeout: 10000,
+    // The *.db.test.ts suites share one database and wipe/assign its reports
+    // (auto-assign takes every unassigned report), so they must not overlap.
+    fileParallelism: !process.env.DATABASE_TEST_URL,
   },
   resolve: {
     alias: {

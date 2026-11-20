@@ -217,10 +217,12 @@ export function changeReportStatus(params: ChangeReportStatusParams): Promise<St
 export function notifyStatusChange(
   report: { id: string; title: string },
   status: string,
-  log: { error: (obj: unknown, msg?: string) => void }
+  log: { error: (obj: unknown, msg?: string) => void },
+  options: { excludeUserId?: string } = {}
 ): void {
   enqueueNotification({
     recipients: () => getReportNotificationRecipients(report.id),
+    excludeUserId: options.excludeUserId,
     type: 'report_status_changed',
     title: 'Report Status Updated',
     body: `Report "${report.title}" status changed to ${status}`,
@@ -230,4 +232,39 @@ export function notifyStatusChange(
       data: { reportId: report.id, type: 'report_status_changed', status },
     },
   }, log)
+}
+
+/**
+ * Notifications for a new assignment (manual or auto), after the response:
+ * the assigned officer gets "assigned to you", and when the assignment moved
+ * the report into 'assigned', the reporter gets the usual status-change
+ * notification. The assignee is left out of the latter so they aren't told twice.
+ * Re-assigning a report that is already past triage changes no status, so the
+ * reporter is not notified.
+ */
+export function notifyAssignment(
+  assignment: { reportId: string; reportTitle: string; assigneeId: string | null; organizationId: string | null },
+  statusChanged: boolean,
+  log: { error: (obj: unknown, msg?: string) => void }
+): void {
+  const { reportId, reportTitle, assigneeId, organizationId } = assignment
+  const title = reportTitle || 'Untitled'
+
+  if (assigneeId) {
+    enqueueNotification({
+      recipients: [assigneeId],
+      type: 'report_assigned',
+      title: 'Report Assigned to You',
+      body: `Report "${title}" has been assigned to you`,
+      data: { reportId, reportTitle, assigneeId, organizationId: organizationId || undefined },
+      push: {
+        body: `"${title}"`,
+        data: { reportId, type: 'report_assigned' },
+      },
+    }, log)
+  }
+
+  if (statusChanged) {
+    notifyStatusChange({ id: reportId, title: reportTitle }, 'assigned', log, { excludeUserId: assigneeId ?? undefined })
+  }
 }
