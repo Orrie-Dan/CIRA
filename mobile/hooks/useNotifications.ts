@@ -5,11 +5,12 @@ import type { Notification } from '../types';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getStoredToken } from '../lib/tokenStorage';
 
 // Helper function to check if token exists
 async function hasAuthToken(): Promise<boolean> {
   try {
-    const token = await AsyncStorage.getItem('auth_token');
+    const token = await getStoredToken();
     return !!token;
   } catch {
     return false;

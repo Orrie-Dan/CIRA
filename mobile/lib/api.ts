@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getStoredToken, setStoredToken, clearStoredToken } from './tokenStorage';
 import type {
   User,
   Report,
@@ -83,7 +83,7 @@ class ApiClient {
 
   private async loadToken(): Promise<void> {
     try {
-      const token = await AsyncStorage.getItem('auth_token');
+      const token = await getStoredToken();
       if (token) {
         this.token = token;
       } else {
@@ -132,15 +132,41 @@ class ApiClient {
 
   async setToken(token: string) {
     this.token = token;
-    await AsyncStorage.setItem('auth_token', token);
+    await setStoredToken(token);
   }
 
   async clearToken() {
     this.token = null;
-    await AsyncStorage.removeItem('auth_token');
+    await clearStoredToken();
   }
 
   // Auth methods
+  async loginWithGoogle(idToken: string): Promise<LoginResponse> {
+    return this.socialLogin('/auth/google', { idToken }, 'Google sign-in failed');
+  }
+
+  async loginWithApple(
+    idToken: string,
+    fullName?: { givenName?: string; familyName?: string }
+  ): Promise<LoginResponse> {
+    return this.socialLogin('/auth/apple', { idToken, fullName }, 'Apple sign-in failed');
+  }
+
+  private async socialLogin(path: string, body: object, fallbackMessage: string): Promise<LoginResponse> {
+    try {
+      const response = await this.client.post<LoginResponse>(path, body);
+      if (response.data.token) {
+        await this.setToken(response.data.token);
+      }
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.data?.error?.message) {
+        throw new Error(error.response.data.error.message);
+      }
+      throw new Error(error.message || fallbackMessage);
+    }
+  }
+
   async register(email: string, password: string, fullName?: string, phone?: string): Promise<LoginResponse> {
     try {
       const response = await this.client.post<LoginResponse>('/auth/register', {

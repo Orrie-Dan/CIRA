@@ -1,5 +1,15 @@
 # Security Changelog
 
+## Phase 3: mobile auth
+
+### Token storage
+- The mobile session token is now stored with `expo-secure-store` (iOS Keychain / Android Keystore) instead of plaintext `AsyncStorage`. Web builds, where SecureStore doesn't exist, still use `AsyncStorage`.
+- Upgrading users stay signed in: the first read moves an existing `AsyncStorage` token into SecureStore and deletes the plaintext copy. Saving a new token or logging out also removes any leftover plaintext copy.
+- `expo-secure-store` is a native module: standalone and dev-client builds need a rebuild (Expo Go already includes it).
+
+### Social login
+- `apiClient.loginWithGoogle` / `loginWithApple` now exist (they call `POST /auth/google` and `/auth/apple` and store the session). Before, `useAuth` called methods that didn't exist. There is still no Google/Apple button in the mobile UI; wiring one up needs OAuth client IDs.
+
 ## Phase 2: report status integrity and staff visibility
 
 ### Who changed a status
