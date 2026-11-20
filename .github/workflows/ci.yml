@@ -28,6 +28,32 @@ jobs:
     defaults:
       run:
         working-directory: api
+    # Disposable databases so the *.db.test.ts and Redis suites run instead of skipping.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: cira_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cira_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_TEST_URL: postgresql://postgres:test@localhost:5432/cira_test
+      REDIS_TEST_URL: redis://localhost:6379/15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -42,6 +68,10 @@ jobs:
         working-directory: api
       - run: pnpm prisma:generate
       - run: pnpm typecheck
+      - name: Create test database schema
+        run: pnpm exec prisma db push --skip-generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_TEST_URL }}
       - run: pnpm test
 
   mobile:

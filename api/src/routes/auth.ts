@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { registerSchema, loginSchema } from '../schemas.js'
@@ -234,21 +235,11 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Login
   app.post('/auth/login', { config: { rateLimit: limits.login } }, async (req: FastifyRequest, reply) => {
-    const parsed = loginSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(loginSchema, req.body)
 
     try {
       // Find user by email
-      const user = await userRepository.findByEmail(parsed.data.email)
+      const user = await userRepository.findByEmail(input.email)
 
       if (!user) {
         return reply.code(401).send({
@@ -272,7 +263,7 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       // Verify password
-      const isValid = await verifyPassword(parsed.data.password, user.passwordHash)
+      const isValid = await verifyPassword(input.password, user.passwordHash)
       if (!isValid) {
         return reply.code(401).send({
           error: {
@@ -362,27 +353,17 @@ export async function authRoutes(app: FastifyInstance) {
       phone: z.string().max(20).optional(),
     })
 
-    const parsed = updateProfileSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(updateProfileSchema, req.body)
 
     try {
       const userId = (req.user as JWTPayload).userId
       
       const updateData: { fullName?: string; phone?: string | null } = {}
-      if (parsed.data.fullName !== undefined) {
-        updateData.fullName = parsed.data.fullName
+      if (input.fullName !== undefined) {
+        updateData.fullName = input.fullName
       }
-      if (parsed.data.phone !== undefined) {
-        updateData.phone = parsed.data.phone || null
+      if (input.phone !== undefined) {
+        updateData.phone = input.phone || null
       }
 
       const user = await prisma.userAccount.update({
@@ -563,17 +544,7 @@ export async function authRoutes(app: FastifyInstance) {
       language: z.enum(['en', 'rw']).optional(),
     })
 
-    const parsed = updatePreferencesSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(updatePreferencesSchema, req.body)
 
     try {
       const userId = (req.user as JWTPayload).userId
@@ -581,17 +552,17 @@ export async function authRoutes(app: FastifyInstance) {
       const preferences = await prisma.userPreferences.upsert({
         where: { userId },
         update: {
-          ...(parsed.data.emailNotifications !== undefined && { emailNotifications: parsed.data.emailNotifications }),
-          ...(parsed.data.pushNotifications !== undefined && { pushNotifications: parsed.data.pushNotifications }),
-          ...(parsed.data.nearbyAlerts !== undefined && { nearbyAlerts: parsed.data.nearbyAlerts }),
-          ...(parsed.data.language !== undefined && { language: parsed.data.language }),
+          ...(input.emailNotifications !== undefined && { emailNotifications: input.emailNotifications }),
+          ...(input.pushNotifications !== undefined && { pushNotifications: input.pushNotifications }),
+          ...(input.nearbyAlerts !== undefined && { nearbyAlerts: input.nearbyAlerts }),
+          ...(input.language !== undefined && { language: input.language }),
         },
         create: {
           userId,
-          emailNotifications: parsed.data.emailNotifications ?? true,
-          pushNotifications: parsed.data.pushNotifications ?? true,
-          nearbyAlerts: parsed.data.nearbyAlerts ?? true,
-          language: parsed.data.language ?? 'en',
+          emailNotifications: input.emailNotifications ?? true,
+          pushNotifications: input.pushNotifications ?? true,
+          nearbyAlerts: input.nearbyAlerts ?? true,
+          language: input.language ?? 'en',
         },
       })
 
@@ -630,21 +601,11 @@ export async function authRoutes(app: FastifyInstance) {
       idToken: z.string().min(1),
     })
 
-    const parsed = googleLoginSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(googleLoginSchema, req.body)
 
     try {
       // Verify Google token and get user info
-      const googleUser = await verifyGoogleToken(parsed.data.idToken)
+      const googleUser = await verifyGoogleToken(input.idToken)
 
       if (!googleUser.verified_email) {
         return reply.code(400).send({
@@ -711,21 +672,11 @@ export async function authRoutes(app: FastifyInstance) {
         .optional(),
     })
 
-    const parsed = appleLoginSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(appleLoginSchema, req.body)
 
     try {
       // Verify Apple token and get user info
-      const appleUser = await verifyAppleToken(parsed.data.idToken)
+      const appleUser = await verifyAppleToken(input.idToken)
 
       if (!appleUser.email_verified) {
         return reply.code(400).send({
@@ -739,10 +690,10 @@ export async function authRoutes(app: FastifyInstance) {
 
       // Construct full name from Apple response or request
       let fullName: string | undefined
-      if (parsed.data.fullName) {
+      if (input.fullName) {
         const parts = [
-          parsed.data.fullName.givenName,
-          parsed.data.fullName.familyName,
+          input.fullName.givenName,
+          input.fullName.familyName,
         ].filter(Boolean)
         fullName = parts.length > 0 ? parts.join(' ') : undefined
       } else if (appleUser.name) {
@@ -802,19 +753,9 @@ export async function authRoutes(app: FastifyInstance) {
       phone: z.string().trim().optional(),
     })
 
-    const parsed = sendOTPSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(sendOTPSchema, req.body)
 
-    if (!parsed.data.email && !parsed.data.phone) {
+    if (!input.email && !input.phone) {
       return reply.code(400).send({
         error: {
           code: 'VALIDATION_ERROR',
@@ -825,12 +766,12 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      const identifier = parsed.data.email || parsed.data.phone!
+      const identifier = input.email || input.phone!
 
       // Find user by email or phone
-      const user = parsed.data.email
-        ? await userRepository.findByEmail(parsed.data.email)
-        : await prisma.userAccount.findFirst({ where: { phone: parsed.data.phone } })
+      const user = input.email
+        ? await userRepository.findByEmail(input.email)
+        : await prisma.userAccount.findFirst({ where: { phone: input.phone } })
 
       if (!user) {
         // Don't reveal if user exists (security best practice)
@@ -846,7 +787,7 @@ export async function authRoutes(app: FastifyInstance) {
       // Deliver over the same channel the code is stored under: email when
       // an email is given (even if a phone is too), SMS only for phone-only.
       try {
-        if (parsed.data.email) {
+        if (input.email) {
           await sendOTPViaEmail(identifier, otp)
         } else {
           await sendOTPViaSMS(identifier, otp)
@@ -873,19 +814,9 @@ export async function authRoutes(app: FastifyInstance) {
       code: z.string().length(6),
     })
 
-    const parsed = verifyOTPSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid request data',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+    const input = parseOrThrow(verifyOTPSchema, req.body)
 
-    if (!parsed.data.email && !parsed.data.phone) {
+    if (!input.email && !input.phone) {
       return reply.code(400).send({
         error: {
           code: 'VALIDATION_ERROR',
@@ -896,8 +827,8 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     try {
-      const identifier = parsed.data.email || parsed.data.phone!
-      const verification = await verifyOtpRecord(identifier, parsed.data.code, 'verification')
+      const identifier = input.email || input.phone!
+      const verification = await verifyOtpRecord(identifier, input.code, 'verification')
 
       if (!verification.valid) {
         return reply.code(400).send({
@@ -911,7 +842,7 @@ export async function authRoutes(app: FastifyInstance) {
 
       // Only the channel the code was delivered to is verified
       // (identifier is the email when one was given, else the phone).
-      const updateData: { emailVerified?: boolean; phoneVerified?: boolean } = parsed.data.email
+      const updateData: { emailVerified?: boolean; phoneVerified?: boolean } = input.email
         ? { emailVerified: true }
         : { phoneVerified: true }
 

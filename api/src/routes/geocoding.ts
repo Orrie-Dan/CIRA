@@ -1,4 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import { parseOrThrow } from '../utils/validation.js'
+import { nominatimFetch, getCachedGeocode, setCachedGeocode, reverseCacheKey, forwardCacheKey, GEOCODE_TTL } from '../services/nominatim.js'
+import { limits } from '../utils/rateLimit.js'
 import { z } from 'zod'
 import { getSectorsByDistrict } from '../data/rwanda-sectors.js'
 
@@ -158,12 +161,7 @@ async function queryNominatim(lat: number, lon: number, zoom: number): Promise<N
   const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=${zoom}&addressdetails=1`
   
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'CIRA-Infrastructure-Reporting/1.0',
-        'Accept': 'application/json',
-      },
-    })
+    const response = await nominatimFetch(url)
 
     if (!response.ok) {
       return null
@@ -368,20 +366,10 @@ function mergeResults(results: NominatimResponse[]): GeocodeResult {
 }
 
 export async function geocodingRoutes(app: FastifyInstance) {
-  app.get('/geocoding/reverse', async (req: FastifyRequest, reply: FastifyReply) => {
-    const parsed = reverseGeocodeQuerySchema.safeParse(req.query)
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Invalid query parameters',
-          details: parsed.error.flatten(),
-          requestId: req.id,
-        },
-      })
-    }
+  app.get('/geocoding/reverse', { config: { rateLimit: limits.geocoding } }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const input = parseOrThrow(reverseGeocodeQuerySchema, req.query, 'Invalid query parameters')
 
-      const { lat, lon } = parsed.data
+      const { lat, lon } = input
       
     if (!isInRwanda(lat, lon)) {
       app.log.warn({ lat, lon }, 'Coordinates outside Rwanda bounds')
@@ -392,6 +380,12 @@ export async function geocodingRoutes(app: FastifyInstance) {
           requestId: req.id,
         },
       })
+    }
+
+    const cacheKey = reverseCacheKey(lat, lon)
+    const cached = await getCachedGeocode<ReturnType<typeof mergeResults>>(cacheKey)
+    if (cached) {
+      return reply.send(cached)
     }
 
     try {
@@ -411,11 +405,7 @@ export async function geocodingRoutes(app: FastifyInstance) {
             app.log.debug({ zoom, display_name: result.display_name }, 'Nominatim response')
           }
         }
-        
-        // Small delay to respect rate limits
-        if (zoom !== zoomLevels[zoomLevels.length - 1]) {
-          await new Promise(resolve => setTimeout(resolve, 100))
-        }
+        // nominatimFetch spaces requests >= 1s apart (Nominatim usage policy).
       }
       
       if (results.length === 0) {
@@ -438,6 +428,7 @@ export async function geocodingRoutes(app: FastifyInstance) {
         result: geocodeResult,
       }, 'Geocoding successful')
       
+      await setCachedGeocode(cacheKey, geocodeResult, GEOCODE_TTL.reverse)
       return reply.send(geocodeResult)
       
     } catch (error) {
@@ -453,7 +444,7 @@ export async function geocodingRoutes(app: FastifyInstance) {
   })
 
   // Forward geocode: address to coordinates
-  app.get('/geocoding/forward', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/geocoding/forward', { config: { rateLimit: limits.geocoding } }, async (req: FastifyRequest, reply: FastifyReply) => {
     const query = req.query as { q?: string }
     const queryString = query.q
 
@@ -467,17 +458,18 @@ export async function geocodingRoutes(app: FastifyInstance) {
       })
     }
 
+    const cacheKey = forwardCacheKey(queryString)
+    const cached = await getCachedGeocode<object>(cacheKey)
+    if (cached) {
+      return reply.send(cached)
+    }
+
     try {
       // Add Rwanda to the query to improve results
       const searchQuery = `${queryString.trim()}, Rwanda`
       const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=5&addressdetails=1&countrycodes=rw`
       
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'CIRA-Infrastructure-Reporting/1.0',
-          'Accept': 'application/json',
-        },
-      })
+      const response = await nominatimFetch(url)
 
       if (!response.ok) {
         app.log.warn(`Nominatim forward geocoding failed: ${response.status} ${response.statusText}`)
@@ -493,10 +485,9 @@ export async function geocodingRoutes(app: FastifyInstance) {
       const results = await response.json()
 
       if (!Array.isArray(results) || results.length === 0) {
-        return reply.send({
-          results: [],
-          message: 'No locations found for the given address',
-        })
+        const empty = { results: [], message: 'No locations found for the given address' }
+        await setCachedGeocode(cacheKey, empty, GEOCODE_TTL.forwardEmpty)
+        return reply.send(empty)
       }
 
       // Process results and validate they're in Rwanda
@@ -531,15 +522,14 @@ export async function geocodingRoutes(app: FastifyInstance) {
         .filter((result: any) => result !== null)
 
       if (validResults.length === 0) {
-        return reply.send({
-          results: [],
-          message: 'No locations found in Rwanda for the given address',
-        })
+        const empty = { results: [], message: 'No locations found in Rwanda for the given address' }
+        await setCachedGeocode(cacheKey, empty, GEOCODE_TTL.forwardEmpty)
+        return reply.send(empty)
       }
 
-      return reply.send({
-        results: validResults,
-      })
+      const found = { results: validResults }
+      await setCachedGeocode(cacheKey, found, GEOCODE_TTL.forward)
+      return reply.send(found)
     } catch (error) {
       app.log.error(error, 'Forward geocoding error')
       return reply.code(500).send({

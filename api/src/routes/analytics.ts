@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { ApiError } from '../utils/errors.js'
@@ -35,20 +36,10 @@ export async function analyticsRoutes(app: FastifyInstance) {
       },
     },
     async (req: FastifyRequest<{ Querystring: z.infer<typeof heatmapQuerySchema> }>, reply) => {
-      const parsed = heatmapQuerySchema.safeParse(req.query)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid query parameters',
-            details: parsed.error.flatten(),
-            requestId: req.id,
-          },
-        })
-      }
+      const input = parseOrThrow(heatmapQuerySchema, req.query, 'Invalid query parameters')
 
       try {
-        const { startDate, endDate, type, status, gridSize } = parsed.data
+        const { startDate, endDate, type, status, gridSize } = input
 
         // Build where clause
         const where: any = {}
@@ -372,20 +363,10 @@ export async function analyticsRoutes(app: FastifyInstance) {
       },
     },
     async (req: FastifyRequest, reply) => {
-      const parsed = exportQuerySchema.safeParse(req.query)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid query parameters',
-            details: parsed.error.flatten(),
-            requestId: req.id,
-          },
-        })
-      }
+      const input = parseOrThrow(exportQuerySchema, req.query, 'Invalid query parameters')
 
       try {
-        const { startDate, endDate, status, type, severity } = parsed.data
+        const { startDate, endDate, status, type, severity } = input
 
         const where: any = {}
         if (startDate || endDate) {

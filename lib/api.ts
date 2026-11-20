@@ -517,7 +517,6 @@ export interface AssignReportPayload {
 
 export interface AddCommentPayload {
   body: string
-  authorId?: string
 }
 
 export interface UpdateStatusPayload {

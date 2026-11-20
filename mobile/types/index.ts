@@ -143,7 +143,6 @@ export interface UpdateStatusPayload {
 
 export interface AddCommentPayload {
   body: string;
-  authorId?: string;
 }
 
 export interface Notification {

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { ApiError } from '../utils/errors.js'
@@ -21,20 +22,10 @@ export async function passwordResetRoutes(app: FastifyInstance) {
         email: z.string().trim().toLowerCase().email(),
       })
 
-      const parsed = requestResetSchema.safeParse(req.body)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid request data',
-            details: parsed.error.flatten(),
-            requestId: req.id,
-          },
-        })
-      }
+      const input = parseOrThrow(requestResetSchema, req.body)
 
       try {
-        const user = await userRepository.findByEmail(parsed.data.email)
+        const user = await userRepository.findByEmail(input.email)
 
         if (!user) {
           return reply.send({ message: GENERIC_REQUEST_MESSAGE })
@@ -67,22 +58,12 @@ export async function passwordResetRoutes(app: FastifyInstance) {
         newPassword: z.string().min(8).max(100),
       })
 
-      const parsed = verifyResetSchema.safeParse(req.body)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid request data',
-            details: parsed.error.flatten(),
-            requestId: req.id,
-          },
-        })
-      }
+      const input = parseOrThrow(verifyResetSchema, req.body)
 
       try {
         const verification = await verifyOtpRecord(
-          parsed.data.email,
-          parsed.data.otp,
+          input.email,
+          input.otp,
           'password_reset'
         )
 
@@ -96,7 +77,7 @@ export async function passwordResetRoutes(app: FastifyInstance) {
           })
         }
 
-        const passwordHash = await hashPassword(parsed.data.newPassword)
+        const passwordHash = await hashPassword(input.newPassword)
         // The code proves control of the email, so mark it verified, and
         // revoke every session issued under the old password.
         await prisma.userAccount.update({

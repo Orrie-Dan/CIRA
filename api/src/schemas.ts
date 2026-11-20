@@ -39,7 +39,6 @@ export const assignReportSchema = z.object({
 export const addCommentSchema = z.object({
   reportId: z.string().uuid(),
   body: z.string().min(1).max(2000),
-  authorId: z.string().uuid().optional(),
 })
 
 export const adminListReportsQuerySchema = z.object({

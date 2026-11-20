@@ -2,9 +2,8 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { ApiError } from '../utils/errors.js'
 import { AuditActions, ResourceTypes } from '../utils/auditLogger.js'
-import { notifyUsers, getReportNotificationRecipients } from '../utils/notifications.js'
-import { sendPushNotificationsToUsers } from '../utils/pushNotifications.js'
-import { broadcastNotificationToUser } from '../routes/notifications.js'
+import { getReportNotificationRecipients } from '../utils/notifications.js'
+import { enqueueNotification } from './notificationDispatcher.js'
 
 export const REPORT_STATUSES = ['new', 'triaged', 'assigned', 'in_progress', 'resolved', 'rejected'] as const
 export type ReportStatus = (typeof REPORT_STATUSES)[number]
@@ -211,37 +210,24 @@ export function changeReportStatus(params: ChangeReportStatusParams): Promise<St
 }
 
 /**
- * Tells the reporter and assigned officers about a status change (in-app,
- * push, SSE). Never throws: a notification failure must not fail the change.
+ * Tells the reporter and assigned officer about a status change (in-app,
+ * push, SSE) after the response. Never throws: a notification failure must
+ * not fail the change.
  */
-export async function notifyStatusChange(
+export function notifyStatusChange(
   report: { id: string; title: string },
   status: string,
   log: { error: (obj: unknown, msg?: string) => void }
-): Promise<void> {
-  try {
-    const recipients = await getReportNotificationRecipients(report.id)
-    if (recipients.length === 0) return
-
-    const body = `Report "${report.title}" status changed to ${status}`
-    const data = { reportId: report.id, reportTitle: report.title, status }
-
-    await notifyUsers(recipients, 'report_status_changed', 'Report Status Updated', body, data)
-    await sendPushNotificationsToUsers(
-      recipients,
-      'Report Status Updated',
-      `"${report.title}" is now ${status}`,
-      { reportId: report.id, type: 'report_status_changed', status }
-    )
-    recipients.forEach((userId) => {
-      broadcastNotificationToUser(userId, {
-        type: 'report_status_changed',
-        title: 'Report Status Updated',
-        body,
-        data,
-      })
-    })
-  } catch (error) {
-    log.error(error, 'Failed to send notifications for status change')
-  }
+): void {
+  enqueueNotification({
+    recipients: () => getReportNotificationRecipients(report.id),
+    type: 'report_status_changed',
+    title: 'Report Status Updated',
+    body: `Report "${report.title}" status changed to ${status}`,
+    data: { reportId: report.id, reportTitle: report.title, status },
+    push: {
+      body: `"${report.title}" is now ${status}`,
+      data: { reportId: report.id, type: 'report_status_changed', status },
+    },
+  }, log)
 }

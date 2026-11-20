@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { parseOrThrow, assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
 import { prisma } from '../prisma.js'
 import { ApiError } from '../utils/errors.js'
@@ -29,24 +30,14 @@ export async function qcSlipRoutes(app: FastifyInstance) {
       },
     },
     async (req: FastifyRequest, reply) => {
-      const parsed = createQcSlipSchema.safeParse(req.body)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Invalid request data',
-            details: parsed.error.flatten(),
-            requestId: req.id,
-          },
-        })
-      }
+      const input = parseOrThrow(createQcSlipSchema, req.body)
 
       try {
         const userId = (req.user as any).userId
 
         // Verify report exists and is resolved
         const report = await prisma.report.findUnique({
-          where: { id: parsed.data.reportId },
+          where: { id: input.reportId },
           select: { id: true, status: true, title: true },
         })
 
@@ -72,7 +63,7 @@ export async function qcSlipRoutes(app: FastifyInstance) {
 
         // Check if QC slip already exists
         const existing = await prisma.qcSlip.findUnique({
-          where: { reportId: parsed.data.reportId },
+          where: { reportId: input.reportId },
         })
 
         if (existing) {
@@ -88,10 +79,10 @@ export async function qcSlipRoutes(app: FastifyInstance) {
         // Create QC slip
         const qcSlip = await prisma.qcSlip.create({
           data: {
-            reportId: parsed.data.reportId,
+            reportId: input.reportId,
             officerId: userId,
-            workSummary: parsed.data.workSummary,
-            photos: parsed.data.photos || [],
+            workSummary: input.workSummary,
+            photos: input.photos || [],
           },
           include: {
             officer: {
@@ -108,7 +99,7 @@ export async function qcSlipRoutes(app: FastifyInstance) {
           userId,
           action: AuditActions.REPORT_UPDATED,
           resourceType: ResourceTypes.REPORT,
-          resourceId: parsed.data.reportId,
+          resourceId: input.reportId,
           details: { qcSlipCreated: true },
         })
 
@@ -135,15 +126,7 @@ export async function qcSlipRoutes(app: FastifyInstance) {
     async (req: FastifyRequest<{ Params: { reportId: string } }>, reply) => {
       const { reportId } = req.params
 
-      if (!z.string().uuid().safeParse(reportId).success) {
-        return reply.code(400).send({
-          error: {
-            code: 'INVALID_ID',
-            message: 'Invalid report ID format',
-            requestId: req.id,
-          },
-        })
-      }
+      assertUuid(reportId, 'Invalid report ID format')
 
       try {
         const qcSlip = await prisma.qcSlip.findUnique({
@@ -194,15 +177,7 @@ export async function qcSlipRoutes(app: FastifyInstance) {
       const { id } = req.params
       const parsed = approveQcSlipSchema.safeParse(req.body)
 
-      if (!z.string().uuid().safeParse(id).success) {
-        return reply.code(400).send({
-          error: {
-            code: 'INVALID_ID',
-            message: 'Invalid QC slip ID format',
-            requestId: req.id,
-          },
-        })
-      }
+      assertUuid(id, 'Invalid QC slip ID format')
 
       if (!parsed.success) {
         return reply.code(400).send({
