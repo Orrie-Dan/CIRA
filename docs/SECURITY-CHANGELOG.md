@@ -1,5 +1,43 @@
 # Security Changelog
 
+## Phase 2: report status integrity and staff visibility
+
+### Who changed a status
+- `PATCH /admin/reports/:id/status` no longer accepts `changedBy` from the request body (it is silently ignored). The status history and audit log always record the authenticated user. Before this change, clients never sent the field, so every history row had `changed_by = NULL`.
+- Status changes made by assigning a report (manual and auto-assign) now record the admin who assigned it.
+- Every status change writes an `audit_log` row (`report_status_changed`, with `fromStatus`, `toStatus` and `source`) in the same transaction as the status update. Before, the admin endpoint wrote none.
+
+### One status service (`api/src/services/reportStatusService.ts`)
+- All status changes go through it: both PATCH endpoints, assign and auto-assign.
+- Allowed transitions:
+
+  | From | To | Who |
+  |---|---|---|
+  | new | triaged, rejected | admin or officer |
+  | triaged | rejected | admin or officer |
+  | new, triaged | assigned | **only by assigning the report** (admin) |
+  | assigned | in_progress | the assigned officer, or an admin |
+  | in_progress | resolved | the assigned officer, or an admin |
+  | assigned, in_progress | rejected | admin |
+  | resolved, rejected | triaged (reopen) | admin |
+
+- "Assigned officer" means the assignee on the report's **latest** assignment. A report assigned only to an organization can be moved on only by an admin.
+- Errors: `409 INVALID_TRANSITION` (transition not allowed, or the report is already in that status), `403 NOT_ASSIGNED` / `403 FORBIDDEN_TRANSITION`, and `409 STATUS_CONFLICT` if the status changed between the read and the write (concurrent update).
+- A legacy status outside the list above (e.g. `pending`) can be changed only by an admin.
+- Assigning a report now creates the assignment and the status change in one transaction.
+
+### Staff visibility
+- On `GET /admin/reports` and `GET /admin/reports/:id`, officers only see reports in `new`/`triaged` (the triage queue) plus reports that have ever been assigned to them. Other reports return 404 on the detail route. Admins are unaffected. Before, officers could list every report, including reporter contact details, and "my reports" was filtered in the browser.
+
+### Public GETs
+- `GET /reports` and `GET /reports/:id/confirmations` now read the session when one is sent (anonymous access is unchanged, and an invalid token is treated as anonymous).
+- Fixed: `GET /reports?myReports=true` ignored the session and returned **everyone's** reports (mobile "My Reports"). It now returns only the caller's reports, or `401` without a session.
+- Fixed: `userConfirmed` on `/reports/:id/confirmations` was always `false`.
+
+### Clients
+- Web: the status menu and quick actions only offer transitions the user is allowed (`lib/report-status.ts` mirrors the API table). Bulk status updates report "updated N, skipped M" instead of failing as a whole.
+- Mobile: the officer quick action only appears for `assigned` (start) and `in_progress` (complete). Officers opening a report outside their scope fall back to the public view.
+
 ## Phase 1: auth hardening
 
 ### Sessions
