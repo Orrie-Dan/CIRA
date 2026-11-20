@@ -1035,26 +1035,32 @@ export default function AdminDashboard() {
   const handleBulkStatusUpdate = async (status: string) => {
     if (selectedReports.size === 0) return
     
-    try {
-      const promises = Array.from(selectedReports).map(id => 
+    // The API rejects transitions that aren't allowed from a report's current
+    // status, so some selected reports may be skipped; report both counts.
+    const results = await Promise.allSettled(
+      Array.from(selectedReports).map(id =>
         apiUpdateReportStatus(id, { status: status as any, note: 'Bulk status update' })
       )
-      await Promise.all(promises)
-      
+    )
+    const updated = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+
+    if (failed.length === 0) {
       toast({
         title: 'Success',
-        description: `Updated ${selectedReports.size} report(s) to ${status}`,
+        description: `Updated ${updated} report(s) to ${status}`,
       })
-      
-      setSelectedReports(new Set())
-      fetchReports()
-    } catch (error: any) {
+    } else {
+      const firstReason = failed[0].reason instanceof Error ? failed[0].reason.message : 'Update failed'
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to update reports',
-        variant: 'destructive',
+        title: updated > 0 ? 'Partially updated' : 'Error',
+        description: `Updated ${updated}, skipped ${failed.length} (e.g. ${firstReason})`,
+        variant: updated > 0 ? undefined : 'destructive',
       })
     }
+
+    setSelectedReports(new Set())
+    fetchReports()
   }
 
   const handleSelectAll = () => {
@@ -3065,7 +3071,6 @@ export default function AdminDashboard() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="triaged">Mark as Triaged</SelectItem>
-                            <SelectItem value="assigned">Mark as Assigned</SelectItem>
                             <SelectItem value="in_progress">Mark In Progress</SelectItem>
                             <SelectItem value="resolved">Mark Resolved</SelectItem>
                           </SelectContent>
@@ -3573,11 +3578,9 @@ export default function AdminDashboard() {
                                       Assign Report
                                     </DropdownMenuItem>
                                   )}
-                                  {report.status !== 'resolved' && report.status !== 'rejected' && (
+                                  {report.status === 'in_progress' && (
                                     <>
-                                      {(report.status === 'new' || report.status === 'triaged' || report.status === 'assigned') && (
-                                        <DropdownMenuSeparator className="bg-slate-700" />
-                                      )}
+                                      <DropdownMenuSeparator className="bg-slate-700" />
                                       <DropdownMenuItem
                                         onClick={() => handleQuickResolve(report)}
                                         disabled={updatingStatus === report.id}

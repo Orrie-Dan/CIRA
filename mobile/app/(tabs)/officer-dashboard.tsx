@@ -169,7 +169,7 @@ function ReportItem({ report, onPress, onQuickAction, isProcessing }: {
             </Text>
           </View>
         </View>
-        {report.status !== 'resolved' && onQuickAction && (
+        {(isStartAction || isCompleteAction) && onQuickAction && (
           <TouchableOpacity
             style={[
               styles.quickActionButton,

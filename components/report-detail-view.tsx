@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { allowedNextStatuses, currentAssigneeId, STATUS_LABELS, type ReportStatus } from '@/lib/report-status'
 import { apiGetDetailedReport, apiAssignReport, apiAddComment, apiUpdateReportStatus, apiGetOrganizations, apiGetUsers, apiGetQcSlip, apiMe, type DetailedReport, type Organization, type User, type AssignReportPayload } from '@/lib/api'
 import { QcSlipView } from '@/components/qc-slip-view'
 import { QcSlipForm } from '@/components/qc-slip-form'
@@ -259,6 +260,14 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
     )
   }
 
+  // Only offer status changes the API will accept for this user.
+  const nextStatuses = allowedNextStatuses(
+    report.status,
+    userRole,
+    !!currentUserId && currentAssigneeId(report.assignments) === currentUserId
+  )
+  const canMoveTo = (status: ReportStatus) => nextStatuses.includes(status)
+
   return (
     <div className="flex flex-col min-h-0 bg-slate-950">
       {/* Enhanced Header Section */}
@@ -324,7 +333,7 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
             <span className="hidden sm:inline">Add Comment</span>
             <span className="sm:hidden">Comment</span>
           </Button>
-          {report.status === 'new' && (
+          {canMoveTo('triaged') && report.status === 'new' && (
             <Button
               size="sm"
               disabled={updatingStatus}
@@ -372,7 +381,7 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
               Quick Assign
             </Button>
           )}
-          {report.status !== 'resolved' && report.status !== 'rejected' && (
+          {canMoveTo('resolved') && (
             <Button
               size="sm"
               variant="outline"
@@ -413,7 +422,7 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
               <UserCheck className="h-4 w-4 mr-2" />
               Assign Job
             </Button>
-          ) : userRole !== 'admin' && report.status === 'assigned' ? (
+          ) : userRole !== 'admin' && canMoveTo('in_progress') ? (
             <Button
               size="sm"
               variant="outline"
@@ -861,7 +870,11 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
                         <AlertCircle className="h-4 w-4 text-purple-400" />
                         New Status
                       </Label>
+                      {nextStatuses.length === 0 && (
+                        <p className="text-sm text-slate-400">No status changes are available to you for this report.</p>
+                      )}
                       <Select
+                        disabled={nextStatuses.length === 0}
                         value={statusUpdate.status}
                         onValueChange={(value) => setStatusUpdate((prev) => ({ ...prev, status: value }))}
                       >
@@ -869,12 +882,9 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
                           <SelectValue placeholder="Select status" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="new">New</SelectItem>
-                          <SelectItem value="triaged">Triaged</SelectItem>
-                          <SelectItem value="assigned">Assigned</SelectItem>
-                          <SelectItem value="in_progress">In Progress</SelectItem>
-                          <SelectItem value="resolved">Resolved</SelectItem>
-                          <SelectItem value="rejected">Rejected</SelectItem>
+                          {nextStatuses.map((status) => (
+                            <SelectItem key={status} value={status}>{STATUS_LABELS[status]}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
