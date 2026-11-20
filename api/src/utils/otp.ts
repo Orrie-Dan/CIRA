@@ -1,11 +1,9 @@
 export {
-  generateOTP,
   generateOtpCode,
-  storeOTP,
   storeOtpRecord,
-  verifyOTP,
   verifyOtpRecord,
-  cleanupExpiredOTPs,
-  cleanupExpiredOtps,
-  getOTPRemainingTime,
+  normalizeOtpIdentifier,
+  OTP_TTL_MINUTES,
+  OTP_MAX_ATTEMPTS,
 } from '../services/otpStore.js'
+export type { OtpPurpose, OtpVerifyResult } from '../services/otpStore.js'

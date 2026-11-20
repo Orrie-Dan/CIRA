@@ -12,6 +12,24 @@ export class ApiError extends Error {
 
 const isProduction = process.env.NODE_ENV === 'production'
 
+/** Fastify error handler: maps any thrown error to the API error envelope. */
+export function fastifyErrorHandler(
+  error: unknown,
+  request: { id: string },
+  reply: { code(statusCode: number): { send(payload: unknown): unknown } }
+) {
+  let statusCode = 500
+  if (error instanceof ApiError) {
+    statusCode = error.statusCode
+  } else if (error && typeof error === 'object' && 'statusCode' in error) {
+    statusCode = (error as any).statusCode
+  } else if (error && typeof error === 'object' && 'status' in error) {
+    statusCode = (error as any).status
+  }
+
+  return reply.code(statusCode).send(errorHandler(error, request.id))
+}
+
 export function errorHandler(error: unknown, requestId: string) {
   if (error instanceof ApiError) {
     return {

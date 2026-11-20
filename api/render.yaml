@@ -23,6 +23,14 @@ services:
         value: info
       - key: CORS_ORIGIN
         value: https://cira-frontend-nu.vercel.app
+      # Render's load balancer appends the client IP to X-Forwarded-For.
+      # Verify after deploy (docs/DEPLOYMENT.md, post-deploy checks).
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
     disk:
       name: cira-uploads
       mountPath: /app/uploads

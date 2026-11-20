@@ -1,5 +1,6 @@
 import { prisma } from '../prisma.js'
 import type { Prisma } from '@prisma/client'
+import { normalizeEmail } from '../utils/auth.js'
 
 export const reportRepository = {
   findById(id: string) {
@@ -32,8 +33,17 @@ export const reportRepository = {
 }
 
 export const userRepository = {
-  findByEmail(email: string) {
-    return prisma.userAccount.findUnique({ where: { email } })
+  /**
+   * Case-insensitive email lookup. New accounts are stored lowercased; the
+   * insensitive fallback covers rows created before emails were normalized.
+   */
+  async findByEmail(email: string) {
+    const normalized = normalizeEmail(email)
+    const exact = await prisma.userAccount.findUnique({ where: { email: normalized } })
+    if (exact) return exact
+    return prisma.userAccount.findFirst({
+      where: { email: { equals: normalized, mode: 'insensitive' } },
+    })
   },
 
   findById(id: string) {

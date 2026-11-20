@@ -19,6 +19,7 @@ model UserAccount {
   emailVerified Boolean               @default(false) @map("email_verified")
   phoneVerified Boolean               @default(false) @map("phone_verified")
   avatarUrl     String?               @map("avatar_url")
+  tokenVersion  Int                   @default(0) @map("token_version") // bump to revoke all issued JWTs
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   reports       Report[]
   assignments   ReportAssignment[]

@@ -7,8 +7,10 @@ import multipart from '@fastify/multipart'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import { reportsRoutes } from './routes/reports.js'
-import { errorHandler, ApiError } from './utils/errors.js'
+import { fastifyErrorHandler } from './utils/errors.js'
 import { getRequiredSecret, validateProductionSecrets } from './utils/secrets.js'
+import { registerRateLimit, parseTrustProxy } from './utils/rateLimit.js'
+import { SESSION_TTL_SECONDS } from './utils/session.js'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -45,6 +47,9 @@ const app = Fastify({
       },
     },
   },
+  // Set TRUST_PROXY (e.g. 1 for one load balancer hop) so request.ip is the
+  // real client IP for rate limiting. Never trust X-Forwarded-For by default.
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   requestIdHeader: 'x-request-id',
   requestIdLogLabel: 'requestId',
   genReqId: () => crypto.randomUUID(),
@@ -67,6 +72,7 @@ app.addHook('onResponse', async (request, reply) => {
 // JWT
 await app.register(jwt, {
   secret: getRequiredSecret('JWT_SECRET'),
+  sign: { expiresIn: SESSION_TTL_SECONDS },
 })
 
 // Cookie
@@ -150,6 +156,9 @@ await app.register(cors, {
   credentials: true,
 })
 
+// Rate limiting (opt-in per route via config.rateLimit)
+await registerRateLimit(app)
+
 // Multipart support for file uploads
 await app.register(multipart, {
   limits: {
@@ -158,20 +167,7 @@ await app.register(multipart, {
 })
 
 // Error handler
-app.setErrorHandler((error, request, reply) => {
-  // Extract status code from various error types
-  let statusCode = 500
-  if (error instanceof ApiError) {
-    statusCode = error.statusCode
-  } else if (error && typeof error === 'object' && 'statusCode' in error) {
-    statusCode = (error as any).statusCode
-  } else if (error && typeof error === 'object' && 'status' in error) {
-    statusCode = (error as any).status
-  }
-  
-  const response = errorHandler(error, request.id)
-  reply.code(statusCode).send(response)
-})
+app.setErrorHandler(fastifyErrorHandler)
 
 // Health check
 app.get('/health', {
