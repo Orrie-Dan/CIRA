@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
-    "start": "expo start --host 10.238.110.46",
+    "start": "expo start --lan",
     "start:lan": "expo start --lan",
     "start:tunnel": "expo start --tunnel",
     "android": "expo start --android",

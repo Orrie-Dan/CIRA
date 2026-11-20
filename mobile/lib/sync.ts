@@ -56,16 +56,25 @@ export async function syncSingleReport(item: SyncQueueItem): Promise<{ success: 
     // Create the report
     const report = await apiClient.createReport(item.reportData);
     
-    // Upload photos if any
+    // Upload photos with limited concurrency
     if (item.photos && item.photos.length > 0) {
-      for (const photoUri of item.photos) {
-        try {
-          await apiClient.uploadPhoto(report.id, photoUri);
-        } catch (photoError: any) {
-          console.warn('Failed to upload photo:', photoError);
-          // Continue with other photos even if one fails
+      const queue = [...item.photos]
+      const concurrency = 3
+      const workers = Array.from(
+        { length: Math.min(concurrency, queue.length) },
+        async () => {
+          while (queue.length > 0) {
+            const photoUri = queue.shift()
+            if (!photoUri) break
+            try {
+              await apiClient.uploadPhoto(report.id, photoUri)
+            } catch (photoError: unknown) {
+              console.warn('Failed to upload photo:', photoError)
+            }
+          }
         }
-      }
+      )
+      await Promise.all(workers)
     }
 
     // Remove from queue on success
