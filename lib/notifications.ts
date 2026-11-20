@@ -184,6 +184,11 @@ export class NotificationSSE {
       this.eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
+          if (data.type === 'session_revoked') {
+            // Signed out everywhere (or password changed): stop instead of retrying.
+            this.disconnect()
+            return
+          }
           if (data.type === 'notification' && this.onNotification) {
             this.onNotification(data.data)
           }

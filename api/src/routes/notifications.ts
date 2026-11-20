@@ -16,12 +16,25 @@ import { randomBytes } from 'crypto'
 import * as ephemeralStore from '../services/ephemeralStore.js'
 import { zodToJsonSchemaFastify } from '../utils/swagger.js'
 import type { JWTPayload } from '../utils/auth.js'
+import {
+  addSseConnection,
+  removeSseConnection,
+  broadcastNotificationToUser,
+  closeIfRevoked,
+  type SseConnection,
+} from '../services/sseConnections.js'
 
 const SSE_TICKET_TTL_SECONDS = 60
 const sseTicketKey = (ticket: string) => `sse-ticket:${ticket}`
 
-// Store SSE connections per user
-const sseConnections = new Map<string, Set<{ send: (data: string) => void; close: () => void }>>()
+/** Heartbeat interval; each heartbeat also re-checks that the session is still valid. */
+let sseHeartbeatMs = 30_000
+export function setSseHeartbeatMsForTesting(ms: number): void {
+  sseHeartbeatMs = ms
+}
+
+// Kept here so existing importers (notification dispatcher) keep working.
+export { broadcastNotificationToUser }
 
 export async function notificationsRoutes(app: FastifyInstance) {
   // Register device token for push notifications
@@ -282,7 +295,13 @@ export async function notificationsRoutes(app: FastifyInstance) {
   }, async (req: FastifyRequest, reply) => {
     const user = req.user as JWTPayload
     const ticket = randomBytes(32).toString('base64url')
-    await ephemeralStore.setWithTtl(sseTicketKey(ticket), user.userId, SSE_TICKET_TTL_SECONDS * 1000)
+    // The ticket remembers the session version, so a ticket taken just before
+    // a revocation can't open a stream after it.
+    await ephemeralStore.setWithTtl(
+      sseTicketKey(ticket),
+      JSON.stringify({ userId: user.userId, tv: user.tv }),
+      SSE_TICKET_TTL_SECONDS * 1000
+    )
     return reply.send({ ticket, expiresIn: SSE_TICKET_TTL_SECONDS })
   })
 
@@ -319,13 +338,18 @@ export async function notificationsRoutes(app: FastifyInstance) {
     // Without a ticket, falls back to the session cookie / Bearer header.
     preHandler: optionalAuthenticate,
   }, async (req: FastifyRequest<{ Querystring: { ticket?: string } }>, reply) => {
-    let user: { userId: string } | null = null
+    let user: { userId: string; tv: number } | null = null
     if (req.query.ticket) {
-      const userId = await ephemeralStore.take(sseTicketKey(req.query.ticket))
-      user = userId ? { userId } : null
+      const stored = await ephemeralStore.take(sseTicketKey(req.query.ticket))
+      const ticket = parseTicket(stored)
+      if (ticket) {
+        const current = await prisma.userAccount.findUnique({ where: { id: ticket.userId }, select: { tokenVersion: true } })
+        user = current && current.tokenVersion === ticket.tv ? ticket : null
+      }
     } else {
+      // optionalAuthenticate already checked the session version.
       const sessionUser = getAuthenticatedUser(req)
-      user = sessionUser ? { userId: sessionUser.userId } : null
+      user = sessionUser ? { userId: sessionUser.userId, tv: sessionUser.tv } : null
     }
 
     if (!user) {
@@ -359,8 +383,13 @@ export async function notificationsRoutes(app: FastifyInstance) {
       reply.raw.setHeader('Access-Control-Allow-Headers', 'Cache-Control')
     }
 
-    const connection = {
+    const { userId, tv } = user
+    let closed = false
+    let heartbeat: NodeJS.Timeout | undefined
+    const connection: SseConnection = {
+      tokenVersion: tv,
       send: (data: string) => {
+        if (closed) return
         try {
           reply.raw.write(`data: ${data}\n\n`)
         } catch (error) {
@@ -368,69 +397,49 @@ export async function notificationsRoutes(app: FastifyInstance) {
         }
       },
       close: () => {
+        if (closed) return
+        closed = true
+        clearInterval(heartbeat)
+        removeSseConnection(userId, connection)
         try {
           reply.raw.end()
-        } catch (error) {
+        } catch {
           // Connection already closed
         }
       },
     }
 
-    // Add connection to user's connections
-    if (!sseConnections.has(user.userId)) {
-      sseConnections.set(user.userId, new Set())
-    }
-    sseConnections.get(user.userId)!.add(connection)
-
-    // Send initial connection message
+    addSseConnection(userId, connection)
     connection.send(JSON.stringify({ type: 'connected' }))
 
-    // Handle client disconnect
-    req.raw.on('close', () => {
-      const userConnections = sseConnections.get(user.userId)
-      if (userConnections) {
-        userConnections.delete(connection)
-        if (userConnections.size === 0) {
-          sseConnections.delete(user.userId)
-        }
-      }
-      connection.close()
-    })
+    // Client disconnected.
+    req.raw.on('close', connection.close)
 
-    // Keep connection alive with heartbeat
-    const heartbeat = setInterval(() => {
+    // Keep the connection alive, and close it if the user's sessions were
+    // revoked since it opened (including on another instance).
+    heartbeat = setInterval(() => {
+      if (closed) return
       try {
         reply.raw.write(': heartbeat\n\n')
-      } catch (error) {
-        clearInterval(heartbeat)
+      } catch {
         connection.close()
+        return
       }
-    }, 30000) // Every 30 seconds
-
-    req.raw.on('close', () => {
-      clearInterval(heartbeat)
-    })
+      closeIfRevoked(userId, connection).catch((error) => {
+        app.log.error(error, 'SSE session check failed; keeping the stream open until the next heartbeat')
+      })
+    }, sseHeartbeatMs)
   })
 }
 
-/**
- * Broadcast notification to user via SSE
- */
-export function broadcastNotificationToUser(userId: string, notification: any) {
-  const connections = sseConnections.get(userId)
-  if (connections) {
-    const message = JSON.stringify({
-      type: 'notification',
-      data: notification,
-    })
-    connections.forEach((conn) => {
-      try {
-        conn.send(message)
-      } catch (error) {
-        // Remove failed connection
-        connections.delete(conn)
-      }
-    })
+function parseTicket(stored: string | null): { userId: string; tv: number } | null {
+  if (!stored) return null
+  try {
+    const parsed = JSON.parse(stored) as { userId?: unknown; tv?: unknown }
+    return typeof parsed.userId === 'string' && typeof parsed.tv === 'number' ? { userId: parsed.userId, tv: parsed.tv } : null
+  } catch {
+    // Tickets issued before this change held only the user id; they expire within a minute.
+    return null
   }
 }
 
