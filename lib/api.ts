@@ -156,13 +156,22 @@ export async function apiMe(): Promise<{ user: User }> {
   const res = await fetch(`${API_BASE}/auth/me`, {
     method: 'GET',
     headers: getAuthHeaders(),
-    credentials: 'include', // Keep for cookie fallback
+    credentials: 'include',
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: { message: 'Unauthorized' } }))
     throw new Error(err.error?.message || 'Unauthorized')
   }
   return res.json()
+}
+
+export async function hasActiveSession(): Promise<boolean> {
+  try {
+    await apiMe()
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function apiLogout(): Promise<void> {

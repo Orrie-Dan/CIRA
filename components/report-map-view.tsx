@@ -242,7 +242,7 @@ export function ReportMapView() {
               zoom={defaultZoom}
               style={{ height: "100%", width: "100%", zIndex: 0 }}
               scrollWheelZoom={true}
-              whenCreated={setLeafletMap}
+              ref={setLeafletMap}
               preferCanvas={true}
               zoomControl={true}
               doubleClickZoom={true}

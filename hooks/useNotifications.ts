@@ -16,7 +16,7 @@ export function useNotifications() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const pollingIntervalRef = useRef<number | null>(null)
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Fetch notifications from API
   const fetchNotifications = useCallback(async (unreadOnly = false) => {

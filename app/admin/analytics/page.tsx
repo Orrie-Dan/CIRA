@@ -114,14 +114,14 @@ export default function AnalyticsPage() {
   }
 
 
-  const handleExport = async (format: 'csv' | 'pdf') => {
+  const handleExport = async (exportFormat: 'csv' | 'pdf') => {
     setExporting(true)
     try {
-      const blob = await apiExportReports({ format })
+      const blob = await apiExportReports({ format: exportFormat })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `reports_${format}_${format(new Date(), 'yyyy-MM-dd')}.${format}`
+      a.download = `reports_${exportFormat}_${format(new Date(), 'yyyy-MM-dd')}.${exportFormat}`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -129,7 +129,7 @@ export default function AnalyticsPage() {
       
       toast({
         title: 'Success',
-        description: `Reports exported successfully as ${format.toUpperCase()}`,
+        description: `Reports exported successfully as ${exportFormat.toUpperCase()}`,
       })
     } catch (error: any) {
       toast({
