@@ -58,9 +58,5 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
         working-directory: mobile
-      # Non-blocking until mobile deps are aligned with Expo SDK 54
-      # (`npx expo install --fix`): jest-expo is still ~52 and its preset
-      # crashes against SDK 54 native module mocks.
       - run: npm test -- --passWithNoTests
         working-directory: mobile
-        continue-on-error: true
