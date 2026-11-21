@@ -23,6 +23,12 @@ export interface Report {
   createdAt: string;
   reporterId?: string | null;
   photos?: Photo[]; // Optional photos for list view
+  /** Only on GET /reports/:id (the public detail view). */
+  latestStatus?: {
+    status: string;
+    note?: string | null;
+    changedAt: string;
+  } | null;
 }
 
 export type ReportType =
@@ -75,6 +81,14 @@ export interface LoginResponse {
   user: User;
 }
 
+/** POST /auth/verify-otp: no token until the account's email is verified. */
+export interface VerifyOtpResponse {
+  user: User;
+  verified: boolean;
+  token?: string;
+  requiresEmailVerification?: boolean;
+}
+
 export interface ApiListResponse {
   data: Report[];
   meta: {
@@ -104,20 +118,17 @@ export interface AdminListResponse {
   };
 }
 
+/** Staff view, GET /admin/reports/:id. */
 export interface DetailedReport extends Report {
   photos: Photo[];
-  latestStatus?: {
-    status: string;
-    note?: string | null;
-    changedAt: string;
-  } | null;
   reporter?: User | null;
   statusHistory?: Array<{
     id: string;
     fromStatus: string | null;
     toStatus: string;
     note: string | null;
-  createdAt: string;
+    changedBy?: Pick<User, 'id' | 'email' | 'fullName'> | null;
+    createdAt: string;
   }>;
   comments?: Array<{
     id: string;
@@ -125,6 +136,7 @@ export interface DetailedReport extends Report {
     author?: User | null;
     createdAt: string;
   }>;
+  /** Newest first: assignments[0] is the current one. */
   assignments?: Array<{
     id: string;
     assignee?: User | null;
@@ -132,6 +144,7 @@ export interface DetailedReport extends Report {
       id: string;
       name: string;
     } | null;
+    dueAt?: string | null;
     createdAt: string;
   }>;
 }

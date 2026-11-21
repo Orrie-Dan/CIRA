@@ -491,44 +491,29 @@ export default function ReportsScreen() {
   }
 
   function applySorting(reports: (Report | AdminReport)[]) {
+    const time = (r: Report | AdminReport) => new Date(r.createdAt).getTime();
+    // Priority score when the API provides one, otherwise severity.
+    const priority = (r: Report | AdminReport) =>
+      (r as { priorityScore?: number }).priorityScore || (r.severity === 'high' ? 3 : r.severity === 'medium' ? 2 : 1);
+    const statusOrder = ['new', 'triaged', 'assigned', 'in_progress', 'resolved', 'rejected'];
+
     reports.sort((a, b) => {
-      let comparison = 0;
-      
       switch (sortBy) {
-        case 'date':
-          comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
-        case 'priority':
-          // Use priority score if available, otherwise use severity
-          const aPriority = (a as any).priorityScore || (a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1);
-          const bPriority = (b as any).priorityScore || (b.severity === 'high' ? 3 : b.severity === 'medium' ? 2 : 1);
-          comparison = bPriority - aPriority; // Higher priority first
-          break;
+        case 'date_desc':
+          return time(b) - time(a);
+        case 'date_asc':
+          return time(a) - time(b);
+        case 'priority_desc':
+          return priority(b) - priority(a) || time(b) - time(a);
+        case 'priority_asc':
+          return priority(a) - priority(b) || time(b) - time(a);
         case 'status':
-          const statusOrder = ['new', 'triaged', 'assigned', 'in_progress', 'resolved', 'rejected'];
-          comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
-          break;
-        case 'newest':
-          comparison = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          break;
-        case 'oldest':
-          comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
-        case 'most_urgent':
-          // High severity first, then by age (oldest first)
-          if (a.severity === 'high' && b.severity !== 'high') return -1;
-          if (b.severity === 'high' && a.severity !== 'high') return 1;
-          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        case 'least_urgent':
-          // Low severity first, then by age (newest first)
-          if (a.severity === 'low' && b.severity !== 'low') return -1;
-          if (b.severity === 'low' && a.severity !== 'low') return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        default:
-          return 0;
+          return statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status) || time(b) - time(a);
+        case 'title_asc':
+          return a.title.localeCompare(b.title);
+        case 'title_desc':
+          return b.title.localeCompare(a.title);
       }
-      
-      return comparison;
     });
   }
 
@@ -1017,7 +1002,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderRadius: borderRadius.lg,
     marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
     paddingVertical: spacing.sm,
     borderWidth: 1,
     borderColor: colors.dividerLight,

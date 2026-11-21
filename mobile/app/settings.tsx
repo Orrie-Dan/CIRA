@@ -14,6 +14,12 @@ import { useAuth } from '../hooks/useAuth';
 import { colors, typography, spacing, borderRadius, shadows } from '../lib/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+type SettingItem = { id: string; label: string; icon: string } & (
+  | { type: 'switch'; value: boolean; onToggle: (value: boolean) => void }
+  | { type: 'navigation'; onPress: () => void }
+  | { type: 'info'; value: string }
+);
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { logout } = useAuth();
@@ -39,7 +45,7 @@ export default function SettingsScreen() {
     );
   };
 
-  const settingsSections = [
+  const settingsSections: Array<{ title: string; items: SettingItem[] }> = [
     {
       title: 'Preferences',
       items: [
@@ -139,7 +145,7 @@ export default function SettingsScreen() {
                 <TouchableOpacity
                   key={item.id}
                   style={styles.settingItem}
-                  onPress={item.onPress}
+                  onPress={item.type === 'navigation' ? item.onPress : undefined}
                   disabled={item.type === 'info' || item.type === 'switch'}
                   activeOpacity={0.7}
                 >
@@ -161,7 +167,7 @@ export default function SettingsScreen() {
                   {item.type === 'info' && (
                     <Text style={styles.settingValue}>{item.value}</Text>
                   )}
-                  {(item.type === 'navigation' || !item.type) && (
+                  {item.type === 'navigation' && (
                     <MaterialCommunityIcons
                       name="chevron-right"
                       size={20}

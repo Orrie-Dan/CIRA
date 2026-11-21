@@ -1,20 +1,25 @@
-import { View, StyleSheet, ViewStyle } from 'react-native';
-import { Card as PaperCard, CardProps } from 'react-native-paper';
+import type { ComponentProps } from 'react';
+import { StyleSheet } from 'react-native';
+import { Card as PaperCard } from 'react-native-paper';
 import { colors, borderRadius, shadows } from '../../lib/theme';
 
-interface CustomCardProps extends CardProps {
+type PaperCardProps = ComponentProps<typeof PaperCard>;
+
+type CustomCardProps = PaperCardProps & {
   variant?: 'default' | 'elevated' | 'outlined';
-}
+};
 
 export function Card({ variant = 'default', style, ...props }: CustomCardProps) {
   const cardStyle = [
     styles.card,
-    variant === 'elevated' && styles.elevated,
-    variant === 'outlined' && styles.outlined,
+    variant === 'elevated' ? styles.elevated : undefined,
+    variant === 'outlined' ? styles.outlined : undefined,
     style,
   ];
 
-  return <PaperCard style={cardStyle} {...props} />;
+  // PaperCard's props are a union over `mode`; the rest-spread loses the
+  // discriminant, so restore the component's own prop type.
+  return <PaperCard {...({ ...props, style: cardStyle } as PaperCardProps)} />;
 }
 
 const styles = StyleSheet.create({
@@ -30,6 +35,3 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
 });
-
-
-

@@ -184,13 +184,13 @@ export default function ProfileScreen() {
               </View>
             ) : getAvatarUrl(user?.avatarUrl) ? (
               <Image
-                source={{ uri: getAvatarUrl(user.avatarUrl)! }}
+                source={{ uri: getAvatarUrl(user?.avatarUrl)! }}
                 style={styles.avatarImage}
                 onError={(e) => {
                   console.error('Image load error:', e.nativeEvent.error);
                 }}
                 onLoad={() => {
-                  console.log('Image loaded successfully:', getAvatarUrl(user.avatarUrl));
+                  console.log('Image loaded successfully:', getAvatarUrl(user?.avatarUrl));
                 }}
               />
             ) : user?.fullName ? (

@@ -82,7 +82,7 @@ CIRA/
 **Infrastructure**
 - Cloudinary (Image hosting)
 - SendGrid (Email notifications - optional)
-- Twilio (SMS notifications - optional)
+- Pindo (SMS verification codes)
 
 ---
 
@@ -152,9 +152,8 @@ CLOUDINARY_API_SECRET="your-cloudinary-api-secret"
 # FROM_EMAIL="noreply@cira.com"
 
 # SMS Configuration (Optional)
-# TWILIO_ACCOUNT_SID="your-twilio-account-sid"
-# TWILIO_AUTH_TOKEN="your-twilio-auth-token"
-# TWILIO_PHONE_NUMBER="+1234567890"
+# PINDO_API_TOKEN="your-pindo-api-token"
+# PINDO_SENDER_ID="your-approved-sender-id"
 ```
 
 **Important:** Replace all placeholder values with actual credentials.
