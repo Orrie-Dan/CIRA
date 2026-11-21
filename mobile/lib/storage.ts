@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ReportType } from '../types';
 
 const DRAFT_REPORTS_KEY = 'draft_reports';
 const SYNC_QUEUE_KEY = 'sync_queue';
@@ -67,7 +68,7 @@ export interface SyncQueueItem {
   reportData: {
     title: string;
     description: string;
-    type: string;
+    type: ReportType;
     severity: 'low' | 'medium' | 'high';
     latitude: number;
     longitude: number;

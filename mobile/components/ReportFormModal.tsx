@@ -23,6 +23,7 @@ import {
 } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { apiClient } from '../lib/api';
+import type { ReportType } from '../types';
 import { takePhoto, pickFromGallery, pickMultiplePhotos } from '../lib/camera';
 import { getCurrentLocation } from '../lib/location';
 import { useAuth } from '../hooks/useAuth';
@@ -423,7 +424,7 @@ export default function ReportFormModal({
       newErrors.location = 'Location is required';
     }
 
-    if (Object.keys(newErrors).length > 0) {
+    if (Object.keys(newErrors).length > 0 || !type || !severity || !location) {
       setErrors(newErrors);
       setError('Please fill in all required fields');
       return;
@@ -442,8 +443,8 @@ export default function ReportFormModal({
           {
             title,
             description,
-            type: type!,
-            severity: severity!,
+            type,
+            severity,
             latitude: location.latitude,
             longitude: location.longitude,
             addressText: location.address,
@@ -563,8 +564,8 @@ export default function ReportFormModal({
             {
               title,
               description,
-              type: type!,
-              severity: severity!,
+              type,
+              severity,
               latitude: location.latitude,
               longitude: location.longitude,
               addressText: location.address,
@@ -784,7 +785,7 @@ export default function ReportFormModal({
                   {location.district && (
                     <View style={styles.sectorInputSection}>
                       <View style={styles.sectorInputLabel}>
-                        <MaterialCommunityIcons name="map-marker-edit" size={16} color={colors.textSecondary} />
+                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={colors.textSecondary} />
                         <Text style={styles.sectorInputLabelText}>
                           Sector (Optional - Select or edit if geocoding is inaccurate)
                         </Text>
@@ -1503,7 +1504,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: borderRadius.xl,
     maxHeight: SCREEN_HEIGHT * 0.6,
     zIndex: 1001,
-    elevation: 1001,
     ...shadows.lg,
   },
   dropdownHeader: {
