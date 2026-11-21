@@ -13,6 +13,7 @@ import { getReportNotificationRecipients } from '../utils/notifications.js'
 import { enqueueNotification } from '../services/notificationDispatcher.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import { assertPhoneAvailable, isPhoneUniqueViolation, phoneInUseError } from '../services/phoneService.js'
+import { closeUserStreams } from '../services/sseConnections.js'
 
 export async function adminRoutes(app: FastifyInstance) {
   // Get detailed report with all history, comments, and assignments
@@ -725,6 +726,7 @@ export async function adminRoutes(app: FastifyInstance) {
         where: { id: userId },
         data: { passwordHash, tokenVersion: { increment: 1 } },
       })
+      closeUserStreams(userId)
 
       app.log.info({ userId }, 'Password updated successfully for user:')
       return reply.code(200).send({

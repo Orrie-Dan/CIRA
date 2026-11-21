@@ -6,6 +6,8 @@ import type {
   Report,
   CreateReportPayload,
   LoginResponse,
+  VerifyOtpResponse,
+  Notification,
   ApiListResponse,
   Photo,
   AdminReport,
@@ -150,6 +152,38 @@ class ApiClient {
     fullName?: { givenName?: string; familyName?: string }
   ): Promise<LoginResponse> {
     return this.socialLogin('/auth/apple', { idToken, fullName }, 'Apple sign-in failed');
+  }
+
+  /** Re-sends the verification code (POST /auth/send-otp). Email wins when both are given. */
+  async sendOTP(params: { email?: string; phone?: string }): Promise<{ message: string }> {
+    try {
+      const response = await this.client.post<{ message: string }>('/auth/send-otp', params);
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.data?.error?.message) {
+        throw new Error(error.response.data.error.message);
+      }
+      throw new Error(error.message || 'Failed to send verification code');
+    }
+  }
+
+  /**
+   * Checks a verification code (POST /auth/verify-otp) and stores the session
+   * token when the server issues one (it doesn't until the email is verified).
+   */
+  async verifyOTP(params: { code: string; email?: string; phone?: string }): Promise<VerifyOtpResponse> {
+    try {
+      const response = await this.client.post<VerifyOtpResponse>('/auth/verify-otp', params);
+      if (response.data.token) {
+        await this.setToken(response.data.token);
+      }
+      return response.data;
+    } catch (error: any) {
+      if (error.response?.data?.error?.message) {
+        throw new Error(error.response.data.error.message);
+      }
+      throw new Error(error.message || 'Verification failed');
+    }
   }
 
   private async socialLogin(path: string, body: object, fallbackMessage: string): Promise<LoginResponse> {
@@ -452,15 +486,7 @@ class ApiClient {
 
   // Notification methods
   async getNotifications(params?: { limit?: number; offset?: number; unreadOnly?: boolean }): Promise<{
-    data: Array<{
-      id: string;
-      type: string;
-      title: string;
-      body: string;
-      data: any;
-      read: boolean;
-      createdAt: string;
-    }>;
+    data: Notification[];
     meta: {
       total: number;
       limit: number;

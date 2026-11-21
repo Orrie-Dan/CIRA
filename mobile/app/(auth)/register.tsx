@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ImageBackground, Image } from 'react-native';
-import { TextInput, Button, Text, Snackbar } from 'react-native-paper';
+import { TextInput, Button, Text, Snackbar, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../hooks/useAuth';
 import { colors, spacing, borderRadius, shadows } from '../../lib/theme';
@@ -191,7 +191,6 @@ export default function RegisterScreen() {
               disabled={loading}
               outlineColor={colors.border}
               activeOutlineColor={colors.primary}
-              required
             />
 
             <TextInput
@@ -228,15 +227,16 @@ export default function RegisterScreen() {
               disabled={loading}
               outlineColor={colors.border}
               activeOutlineColor={colors.primary}
-              required
-              helperText={password.length > 0 && password.length < 6 ? "Password must be at least 6 characters" : ""}
             />
+            <HelperText type="info" visible={password.length > 0 && password.length < 8}>
+              Password must be at least 8 characters
+            </HelperText>
 
             <Button
               mode="contained"
               onPress={handleRegister}
               loading={loading}
-              disabled={loading || !email || !password || password.length < 6}
+              disabled={loading || !email || !password || password.length < 8}
               style={styles.button}
               contentStyle={styles.buttonContent}
               labelStyle={styles.buttonLabel}

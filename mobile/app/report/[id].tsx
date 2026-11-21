@@ -153,6 +153,8 @@ export default function ReportDetailScreen() {
   const statusBgColor = STATUS_BG_COLORS[report.status] || '#F5F5F5';
   const priorityColor = PRIORITY_COLORS[report.severity] || '#666666';
   const priorityBgColor = PRIORITY_BG_COLORS[report.severity] || '#F5F5F5';
+  // Staff detail lists assignments newest first; the API has no `currentAssignment` field.
+  const currentAssignment = 'assignments' in report ? report.assignments?.[0] : undefined;
 
   return (
     <View style={styles.container}>
@@ -336,11 +338,11 @@ export default function ReportDetailScreen() {
               )}
 
               {/* Assignment Info */}
-              {report.currentAssignment && (
+              {currentAssignment && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Assignment</Text>
                   <View style={styles.assignmentCard}>
-                    {report.currentAssignment.assignee && (
+                    {currentAssignment.assignee && (
                       <View style={styles.assignmentRow}>
                         <MaterialCommunityIcons
                           name="account"
@@ -348,12 +350,12 @@ export default function ReportDetailScreen() {
                           color={colors.textSecondary}
                         />
                         <Text style={styles.assignmentText}>
-                          {report.currentAssignment.assignee.fullName ||
-                            report.currentAssignment.assignee.email}
+                          {currentAssignment.assignee.fullName ||
+                            currentAssignment.assignee.email}
                         </Text>
                       </View>
                     )}
-                    {report.currentAssignment.organization && (
+                    {currentAssignment.organization && (
                       <View style={styles.assignmentRow}>
                         <MaterialCommunityIcons
                           name="office-building"
@@ -361,11 +363,11 @@ export default function ReportDetailScreen() {
                           color={colors.textSecondary}
                         />
                         <Text style={styles.assignmentText}>
-                          {report.currentAssignment.organization.name}
+                          {currentAssignment.organization.name}
                         </Text>
                       </View>
                     )}
-                    {report.currentAssignment.dueAt && (
+                    {currentAssignment.dueAt && (
                       <View style={styles.assignmentRow}>
                         <MaterialCommunityIcons
                           name="calendar-clock"
@@ -373,7 +375,7 @@ export default function ReportDetailScreen() {
                           color={colors.textSecondary}
                         />
                         <Text style={styles.assignmentText}>
-                          Due: {new Date(report.currentAssignment.dueAt).toLocaleDateString()}
+                          Due: {new Date(currentAssignment.dueAt).toLocaleDateString()}
                         </Text>
                       </View>
                     )}

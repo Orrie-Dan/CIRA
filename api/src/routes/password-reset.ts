@@ -9,6 +9,7 @@ import { sendPasswordResetEmail } from '../utils/email.js'
 import { limits } from '../utils/rateLimit.js'
 import { userRepository } from '../repositories/index.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
+import { closeUserStreams } from '../services/sseConnections.js'
 
 const GENERIC_REQUEST_MESSAGE =
   'If an account with that email exists, a password reset code has been sent.'
@@ -84,6 +85,7 @@ export async function passwordResetRoutes(app: FastifyInstance) {
           where: { id: verification.userId },
           data: { passwordHash, emailVerified: true, tokenVersion: { increment: 1 } },
         })
+        closeUserStreams(verification.userId)
 
         await logAuditEvent({
           userId: verification.userId,

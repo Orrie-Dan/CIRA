@@ -1,6 +1,7 @@
 import type { FastifyReply } from 'fastify'
 import type { JWTPayload } from './auth.js'
 import { prisma } from '../prisma.js'
+import { closeUserStreams } from '../services/sseConnections.js'
 
 /** Lifetime of an issued JWT and its cookie. */
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -40,10 +41,11 @@ export function clearSessionCookie(reply: FastifyReply): void {
   reply.clearCookie('token', cookieOptions)
 }
 
-/** Invalidates every JWT issued to the user so far. */
+/** Invalidates every JWT issued to the user so far, and closes their open notification streams. */
 export async function revokeAllSessions(userId: string): Promise<void> {
   await prisma.userAccount.update({
     where: { id: userId },
     data: { tokenVersion: { increment: 1 } },
   })
+  closeUserStreams(userId)
 }
