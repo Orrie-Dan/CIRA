@@ -27,6 +27,9 @@ export default tseslint.config(
       // Baseline: lint was never run on the API; existing `any`s are warnings
       // until paid down (same approach as the web config).
       '@typescript-eslint/no-explicit-any': 'warn',
+      // `let timer; const close = () => clearInterval(timer); timer = setInterval(...)`
+      // is deliberate: a const would be in the TDZ if close() ran first.
+      'prefer-const': ['error', { ignoreReadBeforeAssign: true }],
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }],
     },
   },
