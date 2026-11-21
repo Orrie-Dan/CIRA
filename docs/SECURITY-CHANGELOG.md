@@ -113,7 +113,7 @@
 
 ### SSE
 - `GET /notifications/stream?token=<JWT>` is no longer accepted: long-lived JWTs in URLs end up in proxy and access logs. Clients call `POST /notifications/stream-ticket` (authenticated) and open `/notifications/stream?ticket=<ticket>`. A ticket is single-use and valid for 60 seconds. Cookie or Bearer auth without a ticket still works.
-- An open SSE connection is not closed when the user's sessions are revoked. It ends on the next reconnect.
+- Revoking a user's sessions now closes their open SSE streams (fixed after Phase 3; before, a stream stayed open until it reconnected). This covers logout-all, an admin setting the password, password reset, and the OAuth account-takeover protection. Streams on the same server close at once with a final `{"type":"session_revoked"}` event; every 30-second heartbeat also re-checks the session version in the database, so streams on other instances close within 30 s. If that check can't reach the database, the stream stays open until the next heartbeat. A stream ticket records the session version when it is issued, so a ticket taken just before a revocation can't open a stream after it. The web client stops reconnecting when it gets `session_revoked`.
 
 
 ## Breaking API changes

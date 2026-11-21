@@ -3,6 +3,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '../prisma.js'
 import { userRepository } from '../repositories/index.js'
 import { normalizeEmail } from './auth.js'
+import { closeUserStreams } from '../services/sseConnections.js'
 
 export interface GoogleUserInfo {
   id: string
@@ -120,7 +121,7 @@ export async function findOrCreateOAuthUser(
       })
     }
 
-    return await prisma.userAccount.update({
+    const taken = await prisma.userAccount.update({
       where: { id: existingEmailUser.id },
       data: {
         provider,
@@ -133,6 +134,8 @@ export async function findOrCreateOAuthUser(
         tokenVersion: { increment: 1 },
       },
     })
+    closeUserStreams(existingEmailUser.id)
+    return taken
   }
 
   return await prisma.userAccount.create({
