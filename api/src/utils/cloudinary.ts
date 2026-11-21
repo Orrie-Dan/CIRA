@@ -75,15 +75,9 @@ export async function uploadToCloudinary(
  * Delete an image from Cloudinary
  */
 export async function deleteFromCloudinary(publicId: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    cloudinary.uploader.destroy(publicId, (error, result) => {
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    })
-  })
+  // Use the SDK's promise. With a callback, destroy() still returns a promise
+  // that rejects on failure; left unhandled, that rejection crashed the process.
+  await cloudinary.uploader.destroy(publicId)
 }
 
 /**

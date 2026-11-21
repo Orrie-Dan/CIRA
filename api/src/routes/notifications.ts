@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { assertUuid } from '../utils/validation.js'
 import { z } from 'zod'
-import { prisma } from '../prisma.js'
 import {
   getUserNotifications,
   getUnreadCount,
