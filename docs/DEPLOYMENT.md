@@ -11,7 +11,7 @@
 - `GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID` — OAuth verification
 - `REDIS_URL` — optional; shares OTP codes, SSE tickets and rate-limit counters across instances. Required if you run more than one API instance. When set, Redis errors fail the request (no silent fallback to memory).
 - `SENDGRID_API_KEY`, `FROM_EMAIL` — **required in production**: verification and password-reset codes are emailed through the SendGrid REST API. `FROM_EMAIL` must be a verified SendGrid sender. Optional `FROM_NAME` (default `CIRA`).
-- `TWILIO_*` — optional SMS delivery for OTP codes
+- `PINDO_API_TOKEN`, `PINDO_SENDER_ID` — **required in production for phone codes**: OTP codes sent by SMS go through the Pindo REST API (`https://api.pindo.io/v1/sms/`). The token is in the Pindo dashboard under Account > Security; `PINDO_SENDER_ID` must be a sender ID approved on that account. Without the token, phone-code requests fail (logged) in production and are printed to the console in development.
 - `TRUST_PROXY` — number of reverse-proxy hops in front of the API (e.g. `1`), or `true`/a CIDR list. Rate limits key on the client IP, which comes from `X-Forwarded-For` only when this is set. Unset behind a proxy means every client shares the proxy's IP and therefore one rate-limit bucket; set too high means clients can spoof their IP. Verify after deploy (see below).
 
 ### Web (root)
