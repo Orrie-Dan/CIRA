@@ -47,7 +47,7 @@ export function ImpactStats() {
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">Our Impact</h2>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Together, we're making our community safer and better maintained.
+            Together, we&apos;re making our community safer and better maintained.
           </p>
         </div>
 

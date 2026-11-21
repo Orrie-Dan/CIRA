@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,18 +27,18 @@ export default function AdminSettingsPage() {
   })
   const [isChangingPassword, setIsChangingPassword] = useState(false)
 
-  useEffect(() => {
-    fetchCurrentUser()
-  }, [])
-
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = useCallback(async () => {
     try {
       const { user } = await apiMe()
       setCurrentUserId(user.id)
     } catch (error) {
       console.error('Failed to fetch current user:', error)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchCurrentUser()
+  }, [fetchCurrentUser])
 
   const handleSave = () => {
     // In a real app, this would save to the backend

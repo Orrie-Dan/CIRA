@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiGetAdminReports, apiUpdateReportStatus, apiAssignReport, apiGetUsers, apiGetOrganizations, apiGetOfficerMetrics, apiAutoAssignReports, apiGetGeographicData, apiMe, type AdminReport, type OfficerMetrics, type GeographicData } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
@@ -71,6 +71,9 @@ export default function AdminDashboard() {
   const router = useRouter()
   const { isAuthenticated, authLoading } = useAdminAuth('admin')
   const [reports, setReports] = useState<AdminReport[]>([])
+  // When `reports` was fetched; overdue/SLA math measures against this instead
+  // of reading the clock during render.
+  const [reportsFetchedAt, setReportsFetchedAt] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedReport, setSelectedReport] = useState<AdminReport | null>(null)
@@ -138,21 +141,12 @@ export default function AdminDashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchReports()
-      fetchUsersAndOrgs()
-      fetchOfficerMetrics()
-      fetchGeographicData()
-    }
-  }, [isAuthenticated])
-
   // Debug: Log users state changes
   useEffect(() => {
     console.log('Users state changed:', { count: users.length, users })
   }, [users])
 
-  const fetchUsersAndOrgs = async () => {
+  const fetchUsersAndOrgs = useCallback(async () => {
     setUsersLoading(true)
     setUsersError(null)
     try {
@@ -189,9 +183,9 @@ export default function AdminDashboard() {
     } finally {
       setUsersLoading(false)
     }
-  }
+  }, [])
 
-  const fetchGeographicData = async () => {
+  const fetchGeographicData = useCallback(async () => {
     setGeographicLoading(true)
     try {
       const data = await apiGetGeographicData()
@@ -202,7 +196,7 @@ export default function AdminDashboard() {
     } finally {
       setGeographicLoading(false)
     }
-  }
+  }, [])
 
   // Compute filtered geographic data based on selections
   const filteredGeographicData = useMemo(() => {
@@ -230,7 +224,7 @@ export default function AdminDashboard() {
     }
   }, [geographicData, selectedProvince, selectedDistrict])
 
-  const fetchOfficerMetrics = async () => {
+  const fetchOfficerMetrics = useCallback(async () => {
     setOfficerMetricsLoading(true)
     try {
       const response = await apiGetOfficerMetrics()
@@ -240,9 +234,9 @@ export default function AdminDashboard() {
     } finally {
       setOfficerMetricsLoading(false)
     }
-  }
+  }, [])
 
-  const fetchReports = async (): Promise<AdminReport[]> => {
+  const fetchReports = useCallback(async (): Promise<AdminReport[]> => {
     setLoading(true)
     setError(null)
     try {
@@ -253,6 +247,7 @@ export default function AdminDashboard() {
         console.log('Sample report:', response.data[0])
       }
       setReports(response.data)
+      setReportsFetchedAt(Date.now())
       return response.data
     } catch (error) {
       console.error('Failed to fetch reports:', error)
@@ -262,7 +257,16 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchReports()
+      fetchUsersAndOrgs()
+      fetchOfficerMetrics()
+      fetchGeographicData()
+    }
+  }, [isAuthenticated, fetchReports, fetchUsersAndOrgs, fetchOfficerMetrics, fetchGeographicData])
 
   const handleViewReport = async (report: AdminReport) => {
     // Always fetch fresh data when opening a report to ensure we have the latest assignment status
@@ -322,7 +326,7 @@ export default function AdminDashboard() {
       if (r.status === 'resolved' || r.status === 'rejected') return false
       if (!r.currentAssignment?.createdAt) return false
       const assignedDate = new Date(r.currentAssignment.createdAt)
-      const daysSinceAssignment = (Date.now() - assignedDate.getTime()) / (1000 * 60 * 60 * 24)
+      const daysSinceAssignment = (reportsFetchedAt - assignedDate.getTime()) / (1000 * 60 * 60 * 24)
       return daysSinceAssignment > 7
     })
 
@@ -370,7 +374,7 @@ export default function AdminDashboard() {
         return hoursToResolve <= slaTarget
       } else {
         // For unresolved reports: check if still within SLA (not overdue)
-        const now = Date.now()
+        const now = reportsFetchedAt
         const hoursSinceAssignment = (now - assignedDate) / (1000 * 60 * 60)
         return hoursSinceAssignment <= slaTarget
       }
@@ -417,91 +421,6 @@ export default function AdminDashboard() {
       categoryAvgTimes,
     }
   })()
-
-  // Reports by province
-  const provinceData = (() => {
-    const provinceMap = new Map<string, number>()
-    reports.forEach(report => {
-      const province = report.province?.trim()
-      if (province && province.length > 0) {
-        provinceMap.set(province, (provinceMap.get(province) || 0) + 1)
-      }
-    })
-    return Array.from(provinceMap.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-  })()
-
-  // Reports by district (filtered by province if selected)
-  const districtData = (() => {
-    const districtMap = new Map<string, number>()
-    const reportsToUse = filterProvince 
-      ? reports.filter(report => report.province?.trim() === filterProvince)
-      : reports
-    reportsToUse.forEach(report => {
-      const district = report.district?.trim()
-      if (district && district.length > 0) {
-        districtMap.set(district, (districtMap.get(district) || 0) + 1)
-      }
-    })
-    return Array.from(districtMap.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10) // Top 10 districts
-  })()
-
-  // Reports by sector (filtered by district and province if selected)
-  const sectorData = (() => {
-    const sectorMap = new Map<string, number>()
-    let reportsToUse = reports
-    if (filterProvince) {
-      reportsToUse = reportsToUse.filter(report => report.province?.trim() === filterProvince)
-    }
-    if (filterDistrict) {
-      reportsToUse = reportsToUse.filter(report => report.district?.trim() === filterDistrict)
-    }
-    reportsToUse.forEach(report => {
-      const sector = report.sector?.trim()
-      if (sector && sector.length > 0) {
-        sectorMap.set(sector, (sectorMap.get(sector) || 0) + 1)
-      }
-    })
-    return Array.from(sectorMap.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10) // Top 10 sectors
-  })()
-
-  // Debug: Log data availability
-  useEffect(() => {
-    if (reports.length > 0) {
-      console.log('Dashboard Statistics:', stats)
-      console.log('Total reports:', reports.length)
-      console.log('Reports with district:', reports.filter(r => r.district).length)
-      console.log('Reports with sector:', reports.filter(r => r.sector).length)
-      console.log('Reports with province:', reports.filter(r => r.province).length)
-      
-      // Log sample reports to see what fields are available
-      if (reports.length > 0) {
-        console.log('Sample report fields:', {
-          id: reports[0].id,
-          district: reports[0].district,
-          sector: reports[0].sector,
-          province: reports[0].province,
-          hasDistrict: !!reports[0].district,
-          hasSector: !!reports[0].sector,
-        })
-      }
-      
-      const districts = [...new Set(reports.filter(r => r.district && r.district.trim()).map(r => r.district))].slice(0, 5)
-      const sectors = [...new Set(reports.filter(r => r.sector && r.sector.trim()).map(r => r.sector))].slice(0, 5)
-      console.log('Sample districts:', districts)
-      console.log('Sample sectors:', sectors)
-      console.log('Province data for chart:', provinceData)
-      console.log('District data for chart:', districtData)
-      console.log('Sector data for chart:', sectorData)
-    }
-  }, [reports, stats, provinceData, districtData, sectorData])
 
   // Reset to first page when filters change
   useEffect(() => {
@@ -788,7 +707,7 @@ export default function AdminDashboard() {
     if (report.status === 'resolved' || report.status === 'rejected') return false
     
     const assignedDate = new Date(report.currentAssignment.createdAt)
-    const daysSinceAssignment = (Date.now() - assignedDate.getTime()) / (1000 * 60 * 60 * 24)
+    const daysSinceAssignment = (reportsFetchedAt - assignedDate.getTime()) / (1000 * 60 * 60 * 24)
     return daysSinceAssignment > 7
   }
 

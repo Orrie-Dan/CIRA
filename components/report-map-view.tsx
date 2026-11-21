@@ -36,55 +36,15 @@ if (typeof window !== "undefined") {
   import("leaflet/dist/leaflet.css")
 }
 
-// Component to handle map clicks (client-side only)
-function MapClickHandler({
-  onMapClick,
-}: {
-  onMapClick: (lat: number, lng: number) => void
-}) {
-  if (typeof window === "undefined") return null
-  
-  const { useMapEvents } = require("react-leaflet")
-  useMapEvents({
-    click: (e: any) => {
-      onMapClick(e.latlng.lat, e.latlng.lng)
-    },
-  })
-  return null
-}
-
-// LocateControl component (client-side only)
-function LocateControlComponent() {
-  if (typeof window === "undefined") return null
-  
-  const { useMap } = require("react-leaflet")
-  const map = useMap()
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="absolute top-4 right-4 z-[1000]"
-      onClick={() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const { latitude, longitude } = pos.coords
-            map.flyTo([latitude, longitude], 15)
-          },
-          (err) => {
-            toast({
-              title: "Location unavailable",
-              description: err.message || "Please allow location access.",
-            })
-          },
-          { enableHighAccuracy: true, timeout: 10000 }
-        )
-      }}
-    >
-      Locate me
-    </Button>
-  )
-}
+// Map controls use react-leaflet hooks, so they load client-side only.
+const MapClickHandler = dynamic(
+  () => import("@/components/map-controls").then((mod) => mod.MapClickHandler),
+  { ssr: false }
+)
+const LocateControl = dynamic(
+  () => import("@/components/map-controls").then((mod) => mod.LocateControl),
+  { ssr: false }
+)
 
 // Default center (Kigali, Rwanda)
 const defaultCenter: [number, number] = [-1.9441, 30.0619]
@@ -250,7 +210,7 @@ export function ReportMapView() {
               fadeAnimation={false}
               zoomAnimation={true}
             >
-              <LocateControlComponent />
+              <LocateControl />
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

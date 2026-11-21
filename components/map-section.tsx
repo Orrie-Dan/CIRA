@@ -48,55 +48,15 @@ interface MapMarker {
   description: string
 }
 
-// Component to handle map clicks (client-side only)
-function MapClickHandler({
-  onMapClick,
-}: {
-  onMapClick: (lat: number, lng: number) => void
-}) {
-  if (typeof window === "undefined") return null
-  
-  const { useMapEvents } = require("react-leaflet")
-  useMapEvents({
-    click: (e: any) => {
-      onMapClick(e.latlng.lat, e.latlng.lng)
-    },
-  })
-  return null
-}
-
-// LocateControl component (client-side only)
-function LocateControlComponent() {
-  if (typeof window === "undefined") return null
-  
-  const { useMap } = require("react-leaflet")
-  const map = useMap()
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="absolute top-4 right-4 z-[1000]"
-      onClick={() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const { latitude, longitude } = pos.coords
-            map.flyTo([latitude, longitude], 15)
-          },
-          (err) => {
-            toast({
-              title: "Location unavailable",
-              description: err.message || "Please allow location access.",
-            })
-          },
-          { enableHighAccuracy: true, timeout: 10000 }
-        )
-      }}
-    >
-      Locate me
-    </Button>
-  )
-}
+// Map controls use react-leaflet hooks, so they load client-side only.
+const MapClickHandler = dynamic(
+  () => import("@/components/map-controls").then((mod) => mod.MapClickHandler),
+  { ssr: false }
+)
+const LocateControl = dynamic(
+  () => import("@/components/map-controls").then((mod) => mod.LocateControl),
+  { ssr: false }
+)
 
 // Icon cache to avoid recreating icons
 const iconCache = new Map<string, any>()
@@ -110,6 +70,9 @@ function createCustomIcon(color: string) {
     return iconCache.get(color)
   }
   
+  // Lazy require: leaflet touches `window` at import, and this runs during a
+  // render that also happens on the server (guarded above).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const L = require("leaflet")
   const icon = L.divIcon({
     className: "custom-marker",
@@ -355,7 +318,7 @@ export function MapSection() {
                   </div>
                   <div>
                     <h4 className="font-semibold mb-1">Submit your report</h4>
-                    <p className="text-sm text-muted-foreground">We'll add it to the public map layer for tracking.</p>
+                    <p className="text-sm text-muted-foreground">We&apos;ll add it to the public map layer for tracking.</p>
                   </div>
                 </div>
               </div>
@@ -418,7 +381,7 @@ export function MapSection() {
                   fadeAnimation={false}
                   zoomAnimation={true}
                 >
-                  <LocateControlComponent />
+                  <LocateControl />
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

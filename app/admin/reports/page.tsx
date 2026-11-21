@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { apiGetAdminReports, type AdminReport } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { Button } from '@/components/ui/button'
@@ -91,11 +91,7 @@ export default function AdminReportsPage() {
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(25)
 
-  useEffect(() => {
-    fetchReports()
-  }, [])
-
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -108,7 +104,11 @@ export default function AdminReportsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchReports()
+  }, [fetchReports])
 
   const handleViewReport = (report: AdminReport) => {
     setSelectedReport(report)

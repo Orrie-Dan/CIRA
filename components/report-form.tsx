@@ -82,22 +82,19 @@ export function ReportForm({
   }
 
   // Update form values when defaultValues change (e.g., when geocoding completes)
+  // (Currently the map views only open the form after geocoding, so the
+  // initial defaultValues already cover it; this handles a late result.)
+  const geoProvince = defaultValues?.province
+  const geoDistrict = defaultValues?.district
+  const geoSector = defaultValues?.sector
   useEffect(() => {
-    if (defaultValues && Object.keys(defaultValues).length > 0) {
-      const currentValues = form.getValues()
-      const hasLocationData = defaultValues.province || defaultValues.district || defaultValues.sector
-      
-      if (hasLocationData) {
-        console.log('Updating form with geocoding data:', defaultValues)
-        form.reset({
-          ...currentValues,
-          province: defaultValues.province || currentValues.province || '',
-          district: defaultValues.district || currentValues.district || '',
-          sector: defaultValues.sector || currentValues.sector || '',
-        }, { keepValues: true })
-      }
-    }
-  }, [defaultValues?.province, defaultValues?.district, defaultValues?.sector, form])
+    if (!geoProvince && !geoDistrict && !geoSector) return
+    // setValue, not reset(..., { keepValues: true }): keepValues leaves the
+    // inputs unchanged, so the geocoded location never reached the fields.
+    if (geoProvince) form.setValue('province', geoProvince)
+    if (geoDistrict) form.setValue('district', geoDistrict)
+    if (geoSector) form.setValue('sector', geoSector)
+  }, [geoProvince, geoDistrict, geoSector, form])
 
   // Watch district field for changes
   const district = form.watch('district')

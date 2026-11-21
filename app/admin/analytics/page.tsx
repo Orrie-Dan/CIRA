@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { HeatmapView } from '@/components/heatmap-view'
@@ -76,13 +76,7 @@ export default function AnalyticsPage() {
     checkAuth()
   }, [router])
 
-  useEffect(() => {
-    if (activeTab === 'trends') {
-      fetchTrendData()
-    }
-  }, [activeTab, trendPeriod])
-
-  const fetchTrendData = async () => {
+  const fetchTrendData = useCallback(async () => {
     if (authError) return
     setLoading(true)
     try {
@@ -111,7 +105,13 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [authError, trendPeriod, router])
+
+  useEffect(() => {
+    if (activeTab === 'trends') {
+      fetchTrendData()
+    }
+  }, [activeTab, fetchTrendData])
 
 
   const handleExport = async (exportFormat: 'csv' | 'pdf') => {
