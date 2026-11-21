@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { allowedNextStatuses, currentAssigneeId, STATUS_LABELS, type ReportStatus } from '@/lib/report-status'
 import { apiGetDetailedReport, apiAssignReport, apiAddComment, apiUpdateReportStatus, apiGetOrganizations, apiGetUsers, apiGetQcSlip, apiMe, type DetailedReport, type Organization, type User, type AssignReportPayload } from '@/lib/api'
 import { QcSlipView } from '@/components/qc-slip-view'
@@ -58,23 +58,16 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
   const [showQcSlipForm, setShowQcSlipForm] = useState(false)
   const [currentUserId, setCurrentUserId] = useState<string | undefined>()
 
-  useEffect(() => {
-    fetchReport()
-    fetchOrganizations()
-    fetchUsers()
-    fetchCurrentUser()
-  }, [reportId])
-
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = useCallback(async () => {
     try {
       const { user } = await apiMe()
       setCurrentUserId(user.id)
     } catch (error) {
       // Not authenticated, that's okay
     }
-  }
+  }, [])
 
-  const fetchReport = async () => {
+  const fetchReport = useCallback(async () => {
     setLoading(true)
     try {
       const data = await apiGetDetailedReport(reportId)
@@ -90,25 +83,32 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
     } finally {
       setLoading(false)
     }
-  }
+  }, [reportId])
 
-  const fetchOrganizations = async () => {
+  const fetchOrganizations = useCallback(async () => {
     try {
       const response = await apiGetOrganizations()
       setOrganizations(response.data)
     } catch (error) {
       console.error('Failed to fetch organizations:', error)
     }
-  }
+  }, [])
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       const response = await apiGetUsers('officer')
       setUsers(response.data)
     } catch (error) {
       console.error('Failed to fetch users:', error)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchReport()
+    fetchOrganizations()
+    fetchUsers()
+    fetchCurrentUser()
+  }, [reportId, fetchReport, fetchOrganizations, fetchUsers, fetchCurrentUser])
 
   const handleAssign = async () => {
     // Check if at least one is selected (not empty string)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
@@ -33,13 +33,7 @@ export function HeatmapView({ center = [-1.9441, 30.0619], zoom = 11 }: HeatmapV
     endDate: '',
   })
 
-  useEffect(() => {
-    if (mapReady) {
-      fetchHeatmapData()
-    }
-  }, [mapReady, filters])
-
-  const fetchHeatmapData = async () => {
+  const fetchHeatmapData = useCallback(async () => {
     setLoading(true)
     try {
       const params: any = {}
@@ -71,7 +65,13 @@ export function HeatmapView({ center = [-1.9441, 30.0619], zoom = 11 }: HeatmapV
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters])
+
+  useEffect(() => {
+    if (mapReady) {
+      fetchHeatmapData()
+    }
+  }, [mapReady, fetchHeatmapData])
 
   // Helper function to get color based on intensity
   const getColor = (intensity: number): string => {

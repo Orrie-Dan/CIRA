@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { apiGetAdminReports, apiMe, type AdminReport } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { Button } from '@/components/ui/button'
@@ -91,17 +91,7 @@ export default function OfficerReportsPage() {
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pageSize, setPageSize] = useState<number>(25)
 
-  useEffect(() => {
-    fetchCurrentUser()
-  }, [])
-
-  useEffect(() => {
-    if (currentOfficerId) {
-      fetchReports()
-    }
-  }, [currentOfficerId])
-
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = useCallback(async () => {
     try {
       const { user } = await apiMe()
       if (user.role === 'officer' || user.role === 'admin') {
@@ -114,9 +104,13 @@ export default function OfficerReportsPage() {
         window.location.href = '/login'
       }
     }
-  }
+  }, [])
 
-  const fetchReports = async () => {
+  useEffect(() => {
+    fetchCurrentUser()
+  }, [fetchCurrentUser])
+
+  const fetchReports = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -145,7 +139,13 @@ export default function OfficerReportsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [currentOfficerId])
+
+  useEffect(() => {
+    if (currentOfficerId) {
+      fetchReports()
+    }
+  }, [currentOfficerId, fetchReports])
 
   const handleViewReport = (report: AdminReport) => {
     setSelectedReport(report)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,11 +22,7 @@ export function QcSlipView({ reportId, userRole = 'citizen', reporterId, current
   const [loading, setLoading] = useState(true)
   const [approving, setApproving] = useState(false)
 
-  useEffect(() => {
-    fetchQcSlip()
-  }, [reportId])
-
-  const fetchQcSlip = async () => {
+  const fetchQcSlip = useCallback(async () => {
     try {
       const { qcSlip: data } = await apiGetQcSlip(reportId)
       setQcSlip(data)
@@ -40,7 +36,11 @@ export function QcSlipView({ reportId, userRole = 'citizen', reporterId, current
     } finally {
       setLoading(false)
     }
-  }
+  }, [reportId])
+
+  useEffect(() => {
+    fetchQcSlip()
+  }, [fetchQcSlip])
 
   const handleApprove = async (approved: boolean) => {
     if (!qcSlip) return

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { apiGetAdminReports, apiMe, type AdminReport } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
@@ -101,13 +101,7 @@ export default function OfficerDashboard() {
     checkAuth()
   }, [router])
 
-  useEffect(() => {
-    if (currentOfficerId && isAuthenticated) {
-      fetchReports()
-    }
-  }, [filters, currentOfficerId, isAuthenticated])
-
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setLoading(true)
     try {
       // Only fetch if we have an officer ID, otherwise show empty
@@ -133,7 +127,13 @@ export default function OfficerDashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [currentOfficerId, filters])
+
+  useEffect(() => {
+    if (currentOfficerId && isAuthenticated) {
+      fetchReports()
+    }
+  }, [currentOfficerId, isAuthenticated, fetchReports])
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }))

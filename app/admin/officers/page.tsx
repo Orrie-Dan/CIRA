@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { apiGetUsers, apiCreateUser, apiUpdateUserPassword, type User, type CreateUserPayload } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { Button } from '@/components/ui/button'
@@ -31,11 +31,7 @@ export default function AdminOfficersPage() {
   const [newPassword, setNewPassword] = useState('')
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false)
 
-  useEffect(() => {
-    fetchOfficers()
-  }, [])
-
-  const fetchOfficers = async () => {
+  const fetchOfficers = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -52,7 +48,11 @@ export default function AdminOfficersPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchOfficers()
+  }, [fetchOfficers])
 
   const handleCreateOfficer = async () => {
     if (!newOfficer.email) {

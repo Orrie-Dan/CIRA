@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -80,28 +80,9 @@ function TrackStatusForm() {
   const [report, setReport] = useState<ReportWithPhotos | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    // Pre-fill from query parameter
-    const idParam = searchParams.get('id')
-    if (idParam) {
-      setReportId(idParam)
-      // Auto-submit if ID is provided in URL
-      handleLookup(idParam)
-    }
-  }, [searchParams])
-
-  const handleLookup = async (idToLookup?: string) => {
-    const id = idToLookup || reportId.trim()
-    
-    if (!id) {
-      toast({
-        title: 'Error',
-        description: 'Please enter a Report ID',
-        variant: 'destructive',
-      })
-      return
-    }
-
+  // Takes the id explicitly (rather than reading the input state) so the URL
+  // effect below doesn't re-run on every keystroke.
+  const lookupReport = useCallback(async (id: string) => {
     const trimmedId = id.trim().toLowerCase()
     let fullReportId = trimmedId
 
@@ -166,6 +147,32 @@ function TrackStatusForm() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  useEffect(() => {
+    // Pre-fill from query parameter and auto-submit if an ID is in the URL
+    const idParam = searchParams.get('id')
+    if (idParam) {
+      // Syncing the input with the URL (which can change on client navigation).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setReportId(idParam)
+      lookupReport(idParam)
+    }
+  }, [searchParams, lookupReport])
+
+  const handleLookup = async (idToLookup?: string) => {
+    const id = idToLookup || reportId.trim()
+
+    if (!id) {
+      toast({
+        title: 'Error',
+        description: 'Please enter a Report ID',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    await lookupReport(id)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

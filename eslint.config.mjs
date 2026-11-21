@@ -11,12 +11,11 @@ export default defineConfig([
     // paid down; once a rule is clean, remove it from this list.
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-require-imports': 'warn',
-      'react-hooks/immutability': 'warn',
+      // Flags the fetch-on-mount pattern (an effect calling a loader that sets
+      // `loading` synchronously) used by every data page. The React Compiler
+      // is not enabled, so this is advisory; clearing it means moving data
+      // loading to a fetching library, which is a refactor of its own.
       'react-hooks/set-state-in-effect': 'warn',
-      'react-hooks/purity': 'warn',
-      'react-hooks/rules-of-hooks': 'warn',
-      'react/no-unescaped-entities': 'warn',
     },
   },
   {

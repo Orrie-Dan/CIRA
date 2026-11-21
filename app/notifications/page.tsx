@@ -122,7 +122,7 @@ export default function NotificationsPage() {
                   <Bell className="h-12 w-12 mx-auto text-slate-500 mb-4" />
                   <p className="text-slate-400">No notifications</p>
                   <p className="text-sm text-slate-500 mt-2">
-                    You'll see notifications here when there are updates to your reports
+                    You&apos;ll see notifications here when there are updates to your reports
                   </p>
                 </div>
               ) : (

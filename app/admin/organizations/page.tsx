@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { apiGetOrganizations, type Organization } from '@/lib/api'
 import { AdminSidebar } from '@/components/admin-sidebar'
 import { Button } from '@/components/ui/button'
@@ -15,11 +15,7 @@ export default function AdminOrganizationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState<string>('')
 
-  useEffect(() => {
-    fetchOrganizations()
-  }, [])
-
-  const fetchOrganizations = async () => {
+  const fetchOrganizations = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -32,7 +28,11 @@ export default function AdminOrganizationsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchOrganizations()
+  }, [fetchOrganizations])
 
   const filteredOrganizations = organizations.filter(org => {
     if (searchQuery) {
