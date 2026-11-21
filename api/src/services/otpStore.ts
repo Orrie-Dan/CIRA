@@ -1,7 +1,11 @@
 import { createHash, randomInt, timingSafeEqual } from 'crypto'
 import * as store from './ephemeralStore.js'
 
-export type OtpPurpose = 'verification' | 'password_reset'
+/**
+ * 'verification': email verification, and phone login for verified numbers.
+ * 'phone_verification': a signed-in user proving they hold a phone number.
+ */
+export type OtpPurpose = 'verification' | 'password_reset' | 'phone_verification'
 
 export const OTP_TTL_MINUTES = 15
 /** Wrong guesses allowed per issued code before it is invalidated. */

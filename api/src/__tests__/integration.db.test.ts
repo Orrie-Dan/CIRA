@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 /**
  * End-to-end flows through the real app (all plugins, routes, auth, rate
  * limiting, error handling) against a real, disposable Postgres. Only outbound
- * email is mocked, to capture OTP codes.
+ * email and SMS are mocked, to capture OTP codes.
  *
  *   docker run -d --rm --name cira-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=cira_test -p 55432:5432 postgres:16-alpine
  *   DATABASE_URL=postgresql://postgres:test@localhost:55432/cira_test npx prisma migrate deploy
@@ -25,6 +25,11 @@ vi.mock('../utils/email.js', () => ({
   }),
   sendPasswordResetEmail: vi.fn(async (email: string, code: string) => {
     sentCodes.set(email, code)
+  }),
+}))
+vi.mock('../utils/sms.js', () => ({
+  sendOTPViaSMS: vi.fn(async (phone: string, code: string) => {
+    sentCodes.set(phone, code)
   }),
 }))
 
@@ -239,6 +244,67 @@ describe.skipIf(!url)('API integration (postgres)', () => {
     const res = await app.inject({ method: 'PATCH', url: '/admin/reports/not-a-uuid/status', headers: as('admin'), payload: { status: 'triaged' } })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toEqual({ error: { code: 'INVALID_ID', message: 'Invalid report ID format', requestId: expect.any(String) } })
+  })
+
+  it('keeps phone numbers unique and only lets verified numbers log in', async () => {
+    const NUMBER = '+250788123456'
+    const OTHER = '+250722000000'
+    const post = (url: string, payload: object, who?: keyof typeof tokens) =>
+      app.inject({ method: 'POST', url, payload, headers: who ? as(who) : {} })
+    const setPhone = (who: keyof typeof tokens, phone: string) =>
+      app.inject({ method: 'PUT', url: '/auth/profile', headers: as(who), payload: { phone } })
+
+    // Stored normalized; a new number starts unverified.
+    const set = await setPhone('citizen', '0788 123 456')
+    expect(set.statusCode).toBe(200)
+    expect(set.json().user).toMatchObject({ phone: NUMBER, phoneVerified: false })
+
+    // Unique across accounts, whatever the spelling.
+    expect((await setPhone('officer', '0788-123-456')).json().error.code).toBe('PHONE_IN_USE')
+    const dupRegister = await post('/auth/register', { email: 'second@int.test', password: 'Second-pass-1', phone: '250788123456' })
+    expect(dupRegister.statusCode).toBe(409)
+    expect(dupRegister.json().error.code).toBe('PHONE_IN_USE')
+    expect(await prisma.userAccount.count({ where: { email: 'second@int.test' } })).toBe(0)
+
+    // An unverified number can't be used to log in: no code is sent.
+    sentCodes.delete(NUMBER)
+    expect((await post('/auth/send-otp', { phone: NUMBER })).statusCode).toBe(200)
+    expect(sentCodes.has(NUMBER)).toBe(false)
+
+    // Verifying requires the signed-in owner and the right code.
+    expect((await post('/auth/phone/send-code', { phone: NUMBER })).statusCode).toBe(401)
+    expect((await post('/auth/phone/send-code', { phone: NUMBER }, 'citizen')).statusCode).toBe(200)
+    const code = sentCodes.get(NUMBER)!
+    const wrongCode = code === '000000' ? '111111' : '000000'
+    expect((await post('/auth/phone/verify', { phone: NUMBER, code: wrongCode }, 'citizen')).statusCode).toBe(400)
+    const verified = await post('/auth/phone/verify', { phone: NUMBER, code }, 'citizen')
+    expect(verified.statusCode).toBe(200)
+    expect(verified.json().user).toMatchObject({ phone: NUMBER, phoneVerified: true })
+
+    // Now the number logs in.
+    sentCodes.delete(NUMBER)
+    await post('/auth/send-otp', { phone: '0788123456' })
+    const login = await post('/auth/verify-otp', { phone: NUMBER, code: sentCodes.get(NUMBER) })
+    expect(login.statusCode).toBe(200)
+    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { authorization: `Bearer ${login.json().token}` } })
+    expect(me.json().user.email).toBe('citizen@int.test')
+
+    // Squatting: the officer types OTHER into their profile (unverified); the
+    // admin proves they hold it and takes it over. The officer can't take it back.
+    expect((await setPhone('officer', OTHER)).statusCode).toBe(200)
+    await post('/auth/phone/send-code', { phone: OTHER }, 'admin')
+    const claim = await post('/auth/phone/verify', { phone: OTHER, code: sentCodes.get(OTHER) }, 'admin')
+    expect(claim.statusCode).toBe(200)
+    expect(await prisma.userAccount.findUniqueOrThrow({ where: { id: officerId }, select: { phone: true, phoneVerified: true } }))
+      .toEqual({ phone: null, phoneVerified: false })
+    expect((await post('/auth/phone/send-code', { phone: OTHER }, 'officer')).json().error.code).toBe('PHONE_IN_USE')
+
+    // Changing the number drops verification; the old number no longer logs in.
+    const changed = await setPhone('citizen', '0733000000')
+    expect(changed.json().user).toMatchObject({ phone: '+250733000000', phoneVerified: false })
+    sentCodes.delete(NUMBER)
+    await post('/auth/send-otp', { phone: NUMBER })
+    expect(sentCodes.has(NUMBER)).toBe(false)
   })
 
   it('revokes every session on logout-all', async () => {

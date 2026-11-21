@@ -225,20 +225,79 @@ describe('auth routes', () => {
       expect(users.update.mock.calls[0][0].data).toEqual({ emailVerified: true })
     })
 
-    it('a phone code verifies the phone but gives no session while the email is unverified', async () => {
-      await storeOtpRecord('+250700000000', '123456', 'user-1', 'verification')
-      users.update.mockResolvedValue({ ...citizen, emailVerified: false, phoneVerified: true } as never)
+    it('a phone code never verifies a number: it fails unless the number is already verified', async () => {
+      await storeOtpRecord('+250788123456', '123456', 'user-1', 'verification')
+      users.findFirst.mockResolvedValue(null) // no account with this *verified* number
       const res = await app.inject({
         method: 'POST',
         url: '/auth/verify-otp',
-        payload: { phone: '+250700000000', code: '123456' },
+        payload: { phone: '+250788123456', code: '123456' },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json().error.code).toBe('INVALID_OTP')
+      expect(users.findFirst.mock.calls[0][0]).toMatchObject({ where: { id: 'user-1', phone: '+250788123456', phoneVerified: true } })
+      expect(users.update).not.toHaveBeenCalled()
+      expect(res.headers['set-cookie']).toBeUndefined()
+    })
+
+    it('phone login with a verified number still gives no session while the email is unverified', async () => {
+      await storeOtpRecord('+250788123456', '123456', 'user-1', 'verification')
+      users.findFirst.mockResolvedValue({ ...citizen, emailVerified: false, phone: '+250788123456', phoneVerified: true } as never)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/verify-otp',
+        payload: { phone: '0788 123 456', code: '123456' },
       })
       expect(res.statusCode).toBe(200)
-      expect(users.update.mock.calls[0][0].data).toEqual({ phoneVerified: true })
       const body = res.json() as Record<string, unknown>
       expect(body.token).toBeUndefined()
       expect(body.requiresEmailVerification).toBe(true)
       expect(res.headers['set-cookie']).toBeUndefined()
+      expect(users.update).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('phone OTP login lookup', () => {
+    it('only sends a code to a verified number, looked up in normalized form', async () => {
+      const res = await app.inject({ method: 'POST', url: '/auth/send-otp', payload: { phone: '0788-123-456' } })
+      expect(res.statusCode).toBe(200)
+      expect(users.findFirst.mock.calls[0][0]).toEqual({ where: { phone: '+250788123456', phoneVerified: true } })
+      expect(sendOTPViaSMS).not.toHaveBeenCalled()
+    })
+
+    it('texts the code when the number is verified', async () => {
+      users.findFirst.mockResolvedValue({ ...citizen, phone: '+250788123456', phoneVerified: true } as never)
+      await app.inject({ method: 'POST', url: '/auth/send-otp', payload: { phone: '+250 788 123 456' } })
+      expect(sendOTPViaSMS).toHaveBeenCalledWith('+250788123456', expect.any(String))
+    })
+
+    it('answers a malformed number like a missing account, without a lookup', async () => {
+      const res = await app.inject({ method: 'POST', url: '/auth/send-otp', payload: { phone: '12' } })
+      expect(res.statusCode).toBe(200)
+      expect(res.json().message).toMatch(/If an account exists/)
+      expect(users.findFirst).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('phone verification endpoints', () => {
+    it('require a session', async () => {
+      for (const url of ['/auth/phone/send-code', '/auth/phone/verify']) {
+        const res = await app.inject({ method: 'POST', url, payload: { phone: '+250788123456', code: '123456' } })
+        expect(res.statusCode).toBe(401)
+      }
+    })
+
+    it('reject a malformed number with 400', async () => {
+      users.findUnique.mockResolvedValue(citizen as never)
+      const token = app.jwt.sign({ userId: 'user-1', email: 'user@test.com', role: 'citizen', tv: 0 })
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/phone/send-code',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { phone: 'not-a-number' },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(sendOTPViaSMS).not.toHaveBeenCalled()
     })
   })
 

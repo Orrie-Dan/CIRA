@@ -1,5 +1,20 @@
 # Security Changelog
 
+## Phone numbers and phone login
+
+### The problem
+- `POST /auth/send-otp` with a phone picked the first account with that number (`findFirst`). Numbers were neither unique nor normalized, and anyone could put any number on their profile. A phone code also marked the number verified and, for accounts with a verified email, issued a session. So whoever held a number that someone had typed into their profile by mistake (or a recycled number) could log into that account. It wasn't exploitable yet because SMS is still a mock.
+
+### Now
+- Phone numbers are normalized to E.164 everywhere they are accepted (registration, `PUT /auth/profile`, `POST /admin/users`). Rwandan numbers can be entered without `+` (`0788123456` and `250788123456` become `+250788123456`). Anything else returns 400.
+- One account per number (unique index, migration `20261120120000_unique_user_phone`). Registering or saving a number another account already has returns 409 `PHONE_IN_USE`. This reveals that the number is registered, as registration already does for emails.
+- Changing your number resets `phoneVerified`.
+- Numbers are verified only while signed in: `POST /auth/phone/send-code` `{ phone }`, then `POST /auth/phone/verify` `{ phone, code }`. A correct code sets the number on your account as verified. If another account has the number *unverified*, it is removed from that account (nobody can block a number by typing it in first); if another account has it *verified*, 409.
+- `send-otp` and `verify-otp` with a phone are now login only, and only for a verified number. Unknown, unverified and malformed numbers get the same "If an account exists" answer as before. A phone login still gives no session until the email is verified. `verify-otp` no longer verifies numbers.
+- When a request includes an email, the phone in it is ignored, as before (the mobile verify screen sends both).
+- The mobile app has no screen for phone verification yet, so no number can be used for login until one is built.
+- Local databases where two accounts share a number must have the duplicates cleared before the migration will apply.
+
 ## Phase 2: database baseline and enums
 
 ### Migrations
