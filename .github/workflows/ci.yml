@@ -92,5 +92,7 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
         working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
       - run: npm test -- --passWithNoTests
         working-directory: mobile

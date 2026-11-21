@@ -61,14 +61,17 @@ export default function VerifyOTPScreen() {
     setError('');
 
     try {
+      // verifyOTP stores the session token when the server issues one.
       const response = await apiClient.verifyOTP({
         code,
         email: params.email,
         phone: params.phone,
       });
 
-      if (response.token) {
-        await apiClient.setToken(response.token);
+      if (!response.token) {
+        // Only happens for a phone-only code on an account whose email isn't verified yet.
+        setError('Please verify your email address to sign in.');
+        return;
       }
 
       router.replace('/(tabs)');
@@ -142,7 +145,9 @@ export default function VerifyOTPScreen() {
               {otp.map((digit, index) => (
                 <RNTextInput
                   key={index}
-                  ref={(ref) => (inputRefs.current[index] = ref)}
+                  ref={(ref) => {
+                    inputRefs.current[index] = ref;
+                  }}
                   style={styles.otpInput}
                   value={digit}
                   onChangeText={(value) => handleOtpChange(index, value)}
