@@ -4,13 +4,13 @@ import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { MapPin, Eye, Copy, Check } from "lucide-react"
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import dynamic from "next/dynamic"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { ReportForm, type ReportFormValues } from "@/components/report-form"
-import type { Map as LeafletMap } from "leaflet"
 import { toast } from "@/hooks/use-toast"
 import { apiGetAllReports, apiCreateReport, apiUploadPhoto, type ApiReport } from "@/lib/api"
+import { reverseGeocode, type GeocodingResult } from "@/lib/geocoding"
 
 // Dynamically import Leaflet components with loading optimization
 const MapContainer = dynamic(
@@ -32,6 +32,11 @@ const Marker = dynamic(
 )
 const Popup = dynamic(
   () => import("react-leaflet").then((mod) => mod.Popup),
+  { ssr: false }
+)
+
+const LocateMeControl = dynamic(
+  () => import("@/components/locate-me-control").then((mod) => mod.LocateMeControl),
   { ssr: false }
 )
 
@@ -65,38 +70,6 @@ function MapClickHandler({
   return null
 }
 
-// LocateControl component (client-side only)
-function LocateControlComponent() {
-  if (typeof window === "undefined") return null
-  
-  const { useMap } = require("react-leaflet")
-  const map = useMap()
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="absolute top-4 right-4 z-[1000]"
-      onClick={() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const { latitude, longitude } = pos.coords
-            map.flyTo([latitude, longitude], 15)
-          },
-          (err) => {
-            toast({
-              title: "Location unavailable",
-              description: err.message || "Please allow location access.",
-            })
-          },
-          { enableHighAccuracy: true, timeout: 10000 }
-        )
-      }}
-    >
-      Locate me
-    </Button>
-  )
-}
 
 // Icon cache to avoid recreating icons
 const iconCache = new Map<string, any>()
@@ -129,7 +102,8 @@ export function MapSection() {
   const [loading, setLoading] = useState(true)
   const [showReportForm, setShowReportForm] = useState(false)
   const [pendingLatLng, setPendingLatLng] = useState<[number, number] | null>(null)
-  const [leafletMap, setLeafletMap] = useState<LeafletMap | null>(null)
+  const [geocoded, setGeocoded] = useState<GeocodingResult | null>(null)
+  const geocodeRequest = useRef(0)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
   const [submittedReportId, setSubmittedReportId] = useState<string | null>(null)
   const [copiedShort, setCopiedShort] = useState(false)
@@ -217,7 +191,14 @@ export function MapSection() {
 
   const handleMapClick = (lat: number, lng: number) => {
     setPendingLatLng([lat, lng])
+    setGeocoded(null)
     setShowReportForm(true)
+    // Prefill the administrative location in the background; the form is
+    // already usable, and a stale result (a newer click) is ignored.
+    const request = ++geocodeRequest.current
+    reverseGeocode(lat, lng).then((result) => {
+      if (request === geocodeRequest.current) setGeocoded(result)
+    })
   }
 
   const handleSubmitReport = async (values: ReportFormValues, photos: File[] = []) => {
@@ -236,6 +217,9 @@ export function MapSection() {
         province: values.province || undefined,
         district: values.district || undefined,
         sector: values.sector || undefined,
+        cell: values.cell || undefined,
+        village: values.village || undefined,
+        addressText: geocoded?.addressText || undefined,
       })
 
       // Upload photos if any
@@ -315,10 +299,6 @@ export function MapSection() {
     <section className="py-16 bg-background">
       <div className="container mx-auto px-4">
         <div className="grid lg:grid-cols-[350px_1fr] gap-6">
-          {/* Global locate-me listener */}
-          {leafletMap ? (
-            <Listener map={leafletMap} />
-          ) : null}
           {/* Sidebar */}
           <div className="space-y-6">
             <Card className="p-6">
@@ -410,7 +390,6 @@ export function MapSection() {
                   zoom={defaultZoom}
                   style={{ height: "100%", width: "100%", zIndex: 0 }}
                   scrollWheelZoom={true}
-                  ref={setLeafletMap}
                   preferCanvas={true}
                   zoomControl={true}
                   doubleClickZoom={true}
@@ -418,7 +397,7 @@ export function MapSection() {
                   fadeAnimation={false}
                   zoomAnimation={true}
                 >
-                  <LocateControlComponent />
+                  <LocateMeControl />
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -486,6 +465,7 @@ export function MapSection() {
                       setPendingLatLng(null)
                     }
                   }}
+                  defaultValues={geocoded ?? undefined}
                   isSubmitting={isSubmitting}
                 />
               </div>
@@ -582,25 +562,3 @@ export function MapSection() {
   )
 }
 
-function Listener({ map }: { map: LeafletMap }) {
-  useEffect(() => {
-    if (typeof window === "undefined") return
-    
-    const handler = () => {
-      if (!navigator.geolocation) return
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const { latitude, longitude } = pos.coords
-          map.flyTo([latitude, longitude], 15)
-        },
-        () => {
-          toast({ title: "Location unavailable", description: "Please allow location access." })
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-      )
-    }
-    window.addEventListener("cira:locate-me", handler as EventListener)
-    return () => window.removeEventListener("cira:locate-me", handler as EventListener)
-  }, [map])
-  return null
-}

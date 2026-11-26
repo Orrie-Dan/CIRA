@@ -397,9 +397,14 @@ class ApiClient {
     return response.data;
   }
 
-  async getSectorsByDistrict(district: string): Promise<{ sectors: string[]; count: number; district: string }> {
-    const response = await this.client.get('/geocoding/sectors', {
-      params: { district },
+  async getAdminUnits(): Promise<import('./adminUnits').AdminUnitTree> {
+    const response = await this.client.get('/geocoding/admin-units');
+    return response.data;
+  }
+
+  async getVillages(district: string, sector: string, cell: string): Promise<{ villages: string[] }> {
+    const response = await this.client.get('/geocoding/admin-units/villages', {
+      params: { district, sector, cell },
     });
     return response.data;
   }

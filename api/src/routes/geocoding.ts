@@ -3,11 +3,24 @@ import { parseOrThrow } from '../utils/validation.js'
 import { nominatimFetch, getCachedGeocode, setCachedGeocode, reverseCacheKey, forwardCacheKey, GEOCODE_TTL } from '../services/nominatim.js'
 import { limits } from '../utils/rateLimit.js'
 import { z } from 'zod'
-import { getSectorsByDistrict } from '../data/rwanda-sectors.js'
+import {
+  getAdminUnitTree,
+  getSectorsByDistrict,
+  getVillages,
+  isDistrictName,
+  getProvinceForDistrict,
+  matchGeocodedLocation,
+} from '../services/adminUnits.js'
 
 const reverseGeocodeQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),
   lon: z.coerce.number().min(-180).max(180),
+})
+
+const villagesQuerySchema = z.object({
+  district: z.string().trim().min(1).max(100),
+  sector: z.string().trim().min(1).max(100),
+  cell: z.string().trim().min(1).max(100),
 })
 
 // Rwanda's approximate bounding box
@@ -18,29 +31,6 @@ const RWANDA_BOUNDS = {
   maxLon: 30.90,
 }
 
-// All 30 districts of Rwanda
-const RWANDA_DISTRICTS = new Set([
-    'kicukiro', 'gasabo', 'nyarugenge',
-    'bugesera', 'gatsibo', 'kayonza', 'kirehe', 'ngoma', 'nyagatare', 'rwamagana',
-    'burera', 'gakenke', 'gicumbi', 'musanze', 'rulindo',
-    'gisagara', 'huye', 'kamonyi', 'muhanga', 'nyamagabe', 'nyanza', 'nyaruguru', 'ruhango',
-    'karongi', 'ngororero', 'nyabihu', 'nyamasheke', 'rubavu', 'rusizi', 'rutsiro',
-])
-
-const DISTRICT_TO_PROVINCE: Record<string, string> = {
-  'kicukiro': 'Kigali City', 'gasabo': 'Kigali City', 'nyarugenge': 'Kigali City',
-  'bugesera': 'Eastern Province', 'gatsibo': 'Eastern Province', 'kayonza': 'Eastern Province',
-  'kirehe': 'Eastern Province', 'ngoma': 'Eastern Province', 'nyagatare': 'Eastern Province',
-  'rwamagana': 'Eastern Province',
-  'burera': 'Northern Province', 'gakenke': 'Northern Province', 'gicumbi': 'Northern Province',
-  'musanze': 'Northern Province', 'rulindo': 'Northern Province',
-  'gisagara': 'Southern Province', 'huye': 'Southern Province', 'kamonyi': 'Southern Province',
-  'muhanga': 'Southern Province', 'nyamagabe': 'Southern Province', 'nyanza': 'Southern Province',
-  'nyaruguru': 'Southern Province', 'ruhango': 'Southern Province',
-  'karongi': 'Western Province', 'ngororero': 'Western Province', 'nyabihu': 'Western Province',
-  'nyamasheke': 'Western Province', 'rubavu': 'Western Province', 'rusizi': 'Western Province',
-  'rutsiro': 'Western Province',
-}
 
 interface NominatimAddress {
   country?: string
@@ -193,7 +183,7 @@ function extractDistrict(data: NominatimResponse): { district?: string, confiden
     if (!candidate.value) continue
     
     const cleaned = cleanName(candidate.value)
-    if (cleaned && RWANDA_DISTRICTS.has(cleaned.toLowerCase())) {
+    if (cleaned && isDistrictName(cleaned)) {
       return {
         district: normalizeDistrictName(cleaned),
         confidence: candidate.priority <= 2 ? 'high' : 'medium',
@@ -229,7 +219,7 @@ function extractSector(data: NominatimResponse, district?: string): { sector?: s
       const lower = cleaned.toLowerCase()
       
       // Exclude if it's a district or province
-      if (RWANDA_DISTRICTS.has(lower)) continue
+      if (isDistrictName(lower)) continue
       if (lower.includes('province') || lower === 'rwanda') continue
       
       // Exclude if it looks like a road
@@ -256,7 +246,7 @@ function extractSector(data: NominatimResponse, district?: string): { sector?: s
       const lower = cleaned.toLowerCase()
       
       // Skip if it's a known district
-      if (RWANDA_DISTRICTS.has(lower)) continue
+      if (isDistrictName(lower)) continue
       
       // Skip if it's a province indicator
       if (lower.includes('province') || lower === 'rwanda') continue
@@ -268,7 +258,7 @@ function extractSector(data: NominatimResponse, district?: string): { sector?: s
       if (district) {
         const districtIndex = parts.findIndex(p => {
           const c = cleanName(p)
-          return c && RWANDA_DISTRICTS.has(c.toLowerCase())
+          return c && isDistrictName(c)
         })
         
         if (districtIndex > 0 && i < districtIndex && i > 0) {
@@ -291,7 +281,6 @@ function extractSector(data: NominatimResponse, district?: string): { sector?: s
 function mergeResults(results: NominatimResponse[]): GeocodeResult {
   let bestDistrict: { district?: string, confidence: 'high' | 'medium' | 'low', source?: string } = { confidence: 'low' }
   let bestSector: { sector?: string, confidence: 'high' | 'medium' | 'low', source?: string } = { confidence: 'low' }
-  let province: string | undefined
   let road: string | undefined
   let cell: string | undefined
   let village: string | undefined
@@ -323,13 +312,29 @@ function mergeResults(results: NominatimResponse[]): GeocodeResult {
   }
   
   // Derive province from district
-  if (bestDistrict.district) {
-    const cleaned = cleanName(bestDistrict.district)
-    if (cleaned) {
-      province = DISTRICT_TO_PROVINCE[cleaned.toLowerCase()]
+  const province = getProvinceForDistrict(bestDistrict.district)
+
+  // Snap sector/cell/village to official names under the matched district.
+  // Nominatim's Rwanda tagging is inconsistent, so try every place-name field
+  // (heuristic sector first) and keep only names that exist in the hierarchy;
+  // unmatched levels are dropped so clients never prefill an invalid value.
+  const candidates: Array<string | undefined> = [bestSector.sector, cell, village]
+  for (const result of results) {
+    const a = result.address
+    if (a) {
+      candidates.push(a.suburb, a.neighbourhood, a.quarter, a.cell, a.town, a.locality,
+        a.city_district, a.village, a.hamlet, a.residential)
     }
+    candidates.push(...(result.display_name?.split(',') ?? []))
   }
-  
+  const snapped = matchGeocodedLocation(bestDistrict.district, candidates)
+  if (snapped.district) bestDistrict = { ...bestDistrict, district: snapped.district }
+  bestSector = snapped.sector
+    ? { ...bestSector, sector: snapped.sector, confidence: bestSector.sector === snapped.sector ? bestSector.confidence : 'medium' }
+    : { confidence: 'low' }
+  cell = snapped.cell
+  village = snapped.village
+
   // Build address text
   const addressParts: string[] = []
   if (road) addressParts.push(road)
@@ -585,5 +590,31 @@ export async function geocodingRoutes(app: FastifyInstance) {
         },
       })
     }
+  })
+
+  // Rwanda administrative units (Province > District > Sector > Cell) for the
+  // location dropdowns. Static data: cacheable by browsers and CDNs.
+  app.get('/geocoding/admin-units', async (_req: FastifyRequest, reply: FastifyReply) => {
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .send(getAdminUnitTree())
+  })
+
+  // Villages of one cell (kept out of the tree above: ~15k names).
+  app.get('/geocoding/admin-units/villages', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { district, sector, cell } = parseOrThrow(villagesQuerySchema, req.query, 'Invalid query parameters')
+    const villages = getVillages(district, sector, cell)
+    if (!villages) {
+      return reply.code(404).send({
+        error: {
+          code: 'NOT_FOUND',
+          message: 'Unknown district, sector or cell',
+          requestId: req.id,
+        },
+      })
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .send({ district, sector, cell, villages })
   })
 }

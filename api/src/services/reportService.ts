@@ -13,6 +13,8 @@ export interface CreateReportInput {
   province?: string
   district?: string
   sector?: string
+  cell?: string
+  village?: string
   reporterId?: string
 }
 
@@ -29,6 +31,8 @@ export async function createReportWithHistory(input: CreateReportInput) {
     province: input.province,
     district: input.district,
     sector: input.sector,
+    cell: input.cell,
+    village: input.village,
     ...(input.reporterId ? { reporter: { connect: { id: input.reporterId } } } : {}),
   })
 

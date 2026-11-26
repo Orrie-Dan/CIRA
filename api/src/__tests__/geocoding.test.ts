@@ -111,3 +111,72 @@ describe('geocoding routes (caching + Nominatim throttle)', () => {
     expect(await getCachedGeocode('k5000')).toBe(5000)
   })
 })
+
+describe('administrative units routes', () => {
+  let app: FastifyInstance
+  const fetchMock = vi.fn()
+
+  beforeEach(async () => {
+    setRedisForTesting(null)
+    resetNominatimForTesting({ minIntervalMs: 0 })
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    app = Fastify()
+    await app.register(geocodingRoutes)
+    await app.ready()
+  })
+
+  afterEach(async () => {
+    await app.close()
+    vi.unstubAllGlobals()
+    resetNominatimForTesting()
+  })
+
+  it('serves the province > cell tree, cacheable', async () => {
+    const res = await app.inject({ method: 'GET', url: '/geocoding/admin-units' })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['cache-control']).toContain('max-age')
+    const kigali = res.json().provinces.find((p: { name: string }) => p.name === 'Kigali City')
+    const gasabo = kigali.districts.find((d: { name: string }) => d.name === 'Gasabo')
+    const remera = gasabo.sectors.find((s: { name: string }) => s.name === 'Remera')
+    expect(remera.cells).toEqual(expect.arrayContaining(['Nyabisindu', 'Nyarutarama']))
+  })
+
+  it('serves villages per cell and 404s an unknown path', async () => {
+    const ok = await app.inject({ method: 'GET', url: '/geocoding/admin-units/villages?district=gasabo&sector=Remera&cell=Nyabisindu' })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json().villages).toContain('Amarembo I')
+
+    const missing = await app.inject({ method: 'GET', url: '/geocoding/admin-units/villages?district=Huye&sector=Remera&cell=Nyabisindu' })
+    expect(missing.statusCode).toBe(404)
+    const invalid = await app.inject({ method: 'GET', url: '/geocoding/admin-units/villages?district=Gasabo' })
+    expect(invalid.statusCode).toBe(400)
+  })
+
+  it('keeps the legacy sectors endpoint working from the new data', async () => {
+    const res = await app.inject({ method: 'GET', url: '/geocoding/sectors?district=Rwamagana' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().sectors).toContain('Gishari')
+    expect(res.json().count).toBe(14)
+  })
+
+  it('snaps reverse-geocoded names to official ones and drops unmatched levels', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      display_name: 'KG 11 Ave, Nyabisindu, Remera, Gasabo, Kigali City, Rwanda',
+      address: { country_code: 'rw', road: 'KG 11 Ave', suburb: 'Kisimenti', quarter: 'Nyabisindu', city_district: 'Remera', county: 'Gasabo', state: 'Kigali City' },
+    })))
+    const res = await app.inject({ method: 'GET', url: `/geocoding/reverse?lat=${KIGALI.lat}&lon=${KIGALI.lon}` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ province: 'Kigali City', district: 'Gasabo', sector: 'Remera', cell: 'Nyabisindu' })
+    expect(res.json().village).toBeUndefined()
+
+    // A suburb that is not a sector of the district is not returned as one.
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      display_name: 'Somewhere, Huye, Southern Province, Rwanda',
+      address: { country_code: 'rw', suburb: 'Remera', county: 'Huye' },
+    })))
+    const other = await app.inject({ method: 'GET', url: '/geocoding/reverse?lat=-2.6&lon=29.74' })
+    expect(other.json()).toMatchObject({ province: 'Southern Province', district: 'Huye' })
+    expect(other.json().sector).toBeUndefined()
+  })
+})

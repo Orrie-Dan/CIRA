@@ -234,7 +234,7 @@ export default function ReportDetailScreen() {
                   <Text style={styles.addressText}>{report.addressText}</Text>
               {(report.province || report.district || report.sector) && (
                     <Text style={styles.locationDetails}>
-                  {[report.province, report.district, report.sector]
+                  {[report.province, report.district, report.sector, report.cell, report.village]
                     .filter(Boolean)
                         .join(' • ')}
                 </Text>

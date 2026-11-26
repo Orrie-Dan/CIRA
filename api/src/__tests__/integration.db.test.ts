@@ -139,6 +139,26 @@ describe.skipIf(!url)('API integration (postgres)', () => {
     expect(anonMine.statusCode).toBe(401)
   })
 
+  it('stores the administrative location with official spellings and rejects inconsistent ones', async () => {
+    const base = { title: 'Pothole', description: 'Deep pothole near the market', type: 'pothole', severity: 'low', latitude: -1.955, longitude: 30.1 }
+    const created = await app.inject({
+      method: 'POST',
+      url: '/reports',
+      payload: { ...base, district: 'gasabo', sector: 'REMERA', cell: 'nyabisindu', village: 'amarembo i' },
+    })
+    expect(created.statusCode).toBe(201)
+    const detail = await app.inject({ method: 'GET', url: `/reports/${created.json().id}` })
+    expect(detail.json()).toMatchObject({
+      province: 'Kigali City', district: 'Gasabo', sector: 'Remera', cell: 'Nyabisindu', village: 'Amarembo I',
+    })
+
+    const before = await prisma.report.count()
+    const wrong = await app.inject({ method: 'POST', url: '/reports', payload: { ...base, district: 'Huye', sector: 'Remera' } })
+    expect(wrong.statusCode).toBe(400)
+    expect(wrong.json().error.code).toBe('INVALID_LOCATION')
+    expect(await prisma.report.count()).toBe(before)
+  })
+
   it('runs the status workflow with role rules, recorded actors and notifications', async () => {
     const citizenAttempt = await app.inject({ method: 'PATCH', url: `/admin/reports/${reportId}/status`, headers: as('citizen'), payload: { status: 'triaged' } })
     expect(citizenAttempt.statusCode).toBe(403)

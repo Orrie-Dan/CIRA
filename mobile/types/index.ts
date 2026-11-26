@@ -20,6 +20,8 @@ export interface Report {
   province?: string | null;
   district?: string | null;
   sector?: string | null;
+  cell?: string | null;
+  village?: string | null;
   createdAt: string;
   reporterId?: string | null;
   photos?: Photo[]; // Optional photos for list view
@@ -73,6 +75,8 @@ export interface CreateReportPayload {
   province?: string;
   district?: string;
   sector?: string;
+  cell?: string;
+  village?: string;
   reporterId?: string;
 }
 

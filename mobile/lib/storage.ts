@@ -76,6 +76,8 @@ export interface SyncQueueItem {
     province?: string;
     district?: string;
     sector?: string;
+    cell?: string;
+    village?: string;
   };
   photos: string[]; // local file URIs
   retryCount: number;

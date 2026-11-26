@@ -1,16 +1,18 @@
 "use client"
 
 import { z } from "zod"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { MapPin, X, Upload, Image as ImageIcon } from "lucide-react"
+import { AdminLocationFields } from "@/components/admin-location-fields"
+import type { AdminLocation } from "@/lib/admin-units"
 
 const ReportSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters"),
@@ -22,6 +24,8 @@ const ReportSchema = z.object({
   province: z.string().optional(),
   district: z.string().optional(),
   sector: z.string().optional(),
+  cell: z.string().optional(),
+  village: z.string().optional(),
 })
 
 export type ReportFormValues = z.infer<typeof ReportSchema>
@@ -39,8 +43,6 @@ export function ReportForm({
 }) {
   const [photos, setPhotos] = useState<File[]>([])
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([])
-  const [availableSectors, setAvailableSectors] = useState<string[]>([])
-  const [loadingSectors, setLoadingSectors] = useState(false)
 
   const form = useForm<ReportFormValues>({
     resolver: zodResolver(ReportSchema),
@@ -52,6 +54,8 @@ export function ReportForm({
       province: "",
       district: "",
       sector: "",
+      cell: "",
+      village: "",
       ...defaultValues,
     },
   })
@@ -81,54 +85,43 @@ export function ReportForm({
     setPhotoPreviews((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // Update form values when defaultValues change (e.g., when geocoding completes)
+  // Prefill the location when reverse geocoding completes. Geocoded names are
+  // already official spellings (the API snaps them to the boundaries data).
+  // A late geocode result never overwrites a location the user already picked.
+  const locationTouched = useRef(false)
+  const prefill = {
+    province: defaultValues?.province,
+    district: defaultValues?.district,
+    sector: defaultValues?.sector,
+    cell: defaultValues?.cell,
+    village: defaultValues?.village,
+  }
+  const prefillKey = JSON.stringify(prefill)
   useEffect(() => {
-    if (defaultValues && Object.keys(defaultValues).length > 0) {
-      const currentValues = form.getValues()
-      const hasLocationData = defaultValues.province || defaultValues.district || defaultValues.sector
-      
-      if (hasLocationData) {
-        console.log('Updating form with geocoding data:', defaultValues)
-        form.reset({
-          ...currentValues,
-          province: defaultValues.province || currentValues.province || '',
-          district: defaultValues.district || currentValues.district || '',
-          sector: defaultValues.sector || currentValues.sector || '',
-        }, { keepValues: true })
-      }
+    if (locationTouched.current) return
+    const values = JSON.parse(prefillKey) as AdminLocation
+    if (!values.province && !values.district) return
+    const levels = ['province', 'district', 'sector', 'cell', 'village'] as const
+    for (const level of levels) {
+      form.setValue(level, values[level] || '', { shouldDirty: true })
     }
-  }, [defaultValues?.province, defaultValues?.district, defaultValues?.sector, form])
+  }, [prefillKey, form])
 
-  // Watch district field for changes
-  const district = form.watch('district')
-
-  // Fetch sectors when district changes
-  useEffect(() => {
-    async function fetchSectors() {
-      if (!district || district.trim().length === 0) {
-        setAvailableSectors([])
-        // Clear sector if district is cleared
-        form.setValue('sector', '')
-        return
-      }
-
-      setLoadingSectors(true)
-      try {
-        const { getSectorsByDistrict } = await import('@/lib/geocoding')
-        const response = await getSectorsByDistrict(district)
-        setAvailableSectors(response.sectors || [])
-        
-        // If current sector is not in the list, keep it (allow custom sectors)
-      } catch (err) {
-        console.error('Failed to fetch sectors:', err)
-        setAvailableSectors([])
-      } finally {
-        setLoadingSectors(false)
-      }
+  const [province, district, sector, cell, village] = form.watch(['province', 'district', 'sector', 'cell', 'village'])
+  const location: AdminLocation = {
+    province: province || undefined,
+    district: district || undefined,
+    sector: sector || undefined,
+    cell: cell || undefined,
+    village: village || undefined,
+  }
+  const setLocation = useCallback((next: AdminLocation) => {
+    locationTouched.current = true
+    const levels = ['province', 'district', 'sector', 'cell', 'village'] as const
+    for (const level of levels) {
+      form.setValue(level, next[level] ?? '', { shouldDirty: true })
     }
-
-    fetchSectors()
-  }, [district, form])
+  }, [form])
 
   // Calculate progress like mobile
   const calculateProgress = () => {
@@ -282,82 +275,9 @@ export function ReportForm({
             <MapPin className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             <p className="text-xs sm:text-sm font-medium">Location *</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="province"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Province</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder="Province" 
-                      {...field} 
-                      className="bg-background"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="district"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>District</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder="District" 
-                      {...field} 
-                      className="bg-background"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <FormField
-            control={form.control}
-            name="sector"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Sector</FormLabel>
-                <Select 
-                  value={field.value || ''} 
-                  onValueChange={field.onChange}
-                  disabled={!district || loadingSectors}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder={loadingSectors ? "Loading sectors..." : district ? "Select sector" : "Select district first"} />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {availableSectors.map((sector) => (
-                      <SelectItem key={sector} value={sector}>
-                        {sector}
-                      </SelectItem>
-                    ))}
-                    {availableSectors.length === 0 && district && !loadingSectors && (
-                      <SelectItem value="" disabled>No sectors found</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-                {district && (
-                  <FormDescription>
-                    {loadingSectors ? 'Loading sectors...' : `${availableSectors.length} sectors available`}
-                  </FormDescription>
-                )}
-              </FormItem>
-            )}
-          />
+          <AdminLocationFields value={location} onChange={setLocation} disabled={isSubmitting} />
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Location details are automatically detected from the map. You can edit if needed.
+            Filled in from the point you picked on the map. Correct it if it&apos;s wrong.
           </p>
         </div>
 

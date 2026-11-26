@@ -88,7 +88,7 @@ export async function setCachedGeocode(key: string, value: unknown, ttlMs: numbe
 
 /** ~11 m precision: nearby clicks share a cache entry. */
 export function reverseCacheKey(lat: number, lon: number): string {
-  return `geo:rev:${lat.toFixed(4)},${lon.toFixed(4)}`
+  return `geo:rev:v2:${lat.toFixed(4)},${lon.toFixed(4)}`
 }
 
 export function forwardCacheKey(query: string): string {

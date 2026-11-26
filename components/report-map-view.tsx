@@ -31,6 +31,11 @@ const Marker = dynamic(
   { ssr: false }
 )
 
+const LocateMeControl = dynamic(
+  () => import("@/components/locate-me-control").then((mod) => mod.LocateMeControl),
+  { ssr: false }
+)
+
 // Dynamically import Leaflet CSS only on client
 if (typeof window !== "undefined") {
   import("leaflet/dist/leaflet.css")
@@ -53,38 +58,6 @@ function MapClickHandler({
   return null
 }
 
-// LocateControl component (client-side only)
-function LocateControlComponent() {
-  if (typeof window === "undefined") return null
-  
-  const { useMap } = require("react-leaflet")
-  const map = useMap()
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="absolute top-4 right-4 z-[1000]"
-      onClick={() => {
-        if (!navigator.geolocation) return
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const { latitude, longitude } = pos.coords
-            map.flyTo([latitude, longitude], 15)
-          },
-          (err) => {
-            toast({
-              title: "Location unavailable",
-              description: err.message || "Please allow location access.",
-            })
-          },
-          { enableHighAccuracy: true, timeout: 10000 }
-        )
-      }}
-    >
-      Locate me
-    </Button>
-  )
-}
 
 // Default center (Kigali, Rwanda)
 const defaultCenter: [number, number] = [-1.9441, 30.0619]
@@ -117,6 +90,8 @@ export function ReportMapView() {
         province: geocodeResult.province || '',
         district: geocodeResult.district || '',
         sector: geocodeResult.sector || '',
+        cell: geocodeResult.cell || '',
+        village: geocodeResult.village || '',
         addressText: addressText,
       })
       
@@ -153,6 +128,8 @@ export function ReportMapView() {
         province: values.province || undefined,
         district: values.district || undefined,
         sector: values.sector || undefined,
+        cell: values.cell || undefined,
+        village: values.village || undefined,
       })
 
       // Upload photos if any
@@ -250,7 +227,13 @@ export function ReportMapView() {
               fadeAnimation={false}
               zoomAnimation={true}
             >
-              <LocateControlComponent />
+              <LocateMeControl
+                onLocated={({ lat, lng, accuracy }) => {
+                  // Use a precise fix as the report location; for a coarse one
+                  // (desktop IP lookup) let the user click the exact spot.
+                  if (accuracy <= 1000 && !isSubmitting) handleMapClick(lat, lng)
+                }}
+              />
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
