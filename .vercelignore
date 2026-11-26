@@ -1,0 +1,7 @@
+# Vercel deploys only the Next.js web app from this repo.
+# api/ is the Fastify backend (deployed separately from its own Docker
+# context); left in, Vercel compiles every .ts file under a root api/ folder
+# into a Serverless Function and the deploy exceeds the plan's function limit.
+# mobile/ is the Expo app and is not part of the web build.
+/api
+/mobile
