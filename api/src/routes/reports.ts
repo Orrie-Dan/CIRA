@@ -12,6 +12,7 @@ import { authenticateUser, optionalAuthenticate, getAuthenticatedUser, requireAu
 import { changeReportStatus, notifyStatusChange } from '../services/reportStatusService.js'
 import { logAuditEvent, AuditActions, ResourceTypes } from '../utils/auditLogger.js'
 import { createReportWithHistory } from '../services/reportService.js'
+import { resolveAdminLocation } from '../services/adminUnits.js'
 
 export async function reportsRoutes(app: FastifyInstance) {
   // Create report
@@ -70,6 +71,11 @@ export async function reportsRoutes(app: FastifyInstance) {
   }, async (req: FastifyRequest, reply) => {
     app.log.info({ body: req.body }, 'Creating report with data:')
     const input = parseOrThrow(createReportSchema, req.body)
+    const resolved = resolveAdminLocation(input)
+    if (!resolved.ok) {
+      throw new ApiError(400, resolved.message, 'INVALID_LOCATION', { field: resolved.field })
+    }
+    const location = resolved.location
 
     try {
       const authenticatedUser = getAuthenticatedUser(req)
@@ -83,9 +89,11 @@ export async function reportsRoutes(app: FastifyInstance) {
         latitude: input.latitude,
         longitude: input.longitude,
         addressText: input.addressText,
-        province: input.province,
-        district: input.district,
-        sector: input.sector,
+        province: location.province,
+        district: location.district,
+        sector: location.sector,
+        cell: location.cell,
+        village: location.village,
         reporterId,
       })
 
@@ -164,6 +172,8 @@ export async function reportsRoutes(app: FastifyInstance) {
                   province: { type: 'string', nullable: true },
                   district: { type: 'string', nullable: true },
                   sector: { type: 'string', nullable: true },
+                  cell: { type: 'string', nullable: true },
+                  village: { type: 'string', nullable: true },
                   createdAt: { type: 'string', format: 'date-time' },
                   reporterId: { type: 'string', format: 'uuid', nullable: true },
                   photos: {
@@ -313,6 +323,8 @@ export async function reportsRoutes(app: FastifyInstance) {
             province: r.province,
             district: r.district,
             sector: r.sector,
+            cell: r.cell,
+            village: r.village,
             createdAt: r.createdAt.toISOString(),
             reporterId: r.reporterId,
             photos: photos.map((p: any) => ({
@@ -389,6 +401,8 @@ export async function reportsRoutes(app: FastifyInstance) {
             province: { type: 'string', nullable: true },
             district: { type: 'string', nullable: true },
             sector: { type: 'string', nullable: true },
+            cell: { type: 'string', nullable: true },
+            village: { type: 'string', nullable: true },
             createdAt: { type: 'string', format: 'date-time' },
             updatedAt: { type: 'string', format: 'date-time' },
             photos: {
@@ -462,6 +476,8 @@ export async function reportsRoutes(app: FastifyInstance) {
           province: true,
           district: true,
           sector: true,
+          cell: true,
+          village: true,
           createdAt: true,
           updatedAt: true,
           photos: {
@@ -499,6 +515,8 @@ export async function reportsRoutes(app: FastifyInstance) {
         province: report.province,
         district: report.district,
         sector: report.sector,
+        cell: report.cell,
+        village: report.village,
         createdAt: report.createdAt.toISOString(),
         updatedAt: report.updatedAt.toISOString(),
         photos: report.photos.map((p) => ({

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -32,6 +32,8 @@ import { addToSyncQueue, getSyncQueue, removeFromSyncQueue } from '../lib/storag
 import { isOnline } from '../lib/network';
 import { syncPendingReports } from '../lib/sync';
 import { REPORT_TYPES, SEVERITY_OPTIONS } from './report-form/constants';
+import { useAdminLocationPicker, AdminLocationRows, AdminLocationSheet } from './AdminLocationPicker';
+import type { AdminLocation } from '../lib/adminUnits';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -142,6 +144,8 @@ export default function ReportFormModal({
     province?: string;
     district?: string;
     sector?: string;
+    cell?: string;
+    village?: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingLocation, setLoadingLocation] = useState(false);
@@ -155,9 +159,33 @@ export default function ReportFormModal({
   const [showAddressResults, setShowAddressResults] = useState(false);
   const addressSearchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const [sectorMenuVisible, setSectorMenuVisible] = useState(false);
-  const [availableSectors, setAvailableSectors] = useState<string[]>([]);
-  const [loadingSectors, setLoadingSectors] = useState(false);
+
+  // Cascading Province > District > Sector > Cell > Village pickers.
+  const adminValue = useMemo<AdminLocation>(
+    () => ({
+      province: location?.province,
+      district: location?.district,
+      sector: location?.sector,
+      cell: location?.cell,
+      village: location?.village,
+    }),
+    [location?.province, location?.district, location?.sector, location?.cell, location?.village]
+  );
+  const handleAdminChange = useCallback((next: AdminLocation) => {
+    setLocation((prev) =>
+      prev
+        ? {
+            ...prev,
+            province: next.province,
+            district: next.district,
+            sector: next.sector,
+            cell: next.cell,
+            village: next.village,
+          }
+        : prev
+    );
+  }, []);
+  const adminPicker = useAdminLocationPicker(adminValue, handleAdminChange);
 
   useEffect(() => {
     if (visible && initialLocation) {
@@ -203,8 +231,7 @@ export default function ReportFormModal({
         setAddressQuery('');
         setAddressResults([]);
         setShowAddressResults(false);
-        setSectorMenuVisible(false);
-        setAvailableSectors([]);
+        adminPicker.close();
       }, 300);
     }
   }, [visible]);
@@ -233,32 +260,6 @@ export default function ReportFormModal({
     setErrors(newErrors);
   }, [title, description]);
 
-  // Fetch sectors when district is available
-  useEffect(() => {
-    async function fetchSectors() {
-      if (!location?.district) {
-        setAvailableSectors([]);
-        return;
-      }
-
-      setLoadingSectors(true);
-      try {
-        const response = await apiClient.getSectorsByDistrict(location.district);
-        setAvailableSectors(response.sectors || []);
-        
-        // If current sector is not in the list, keep it but mark as custom
-        // This allows users to keep manually entered sectors
-      } catch (err: any) {
-        console.error('Failed to fetch sectors:', err);
-        setAvailableSectors([]);
-      } finally {
-        setLoadingSectors(false);
-      }
-    }
-
-    fetchSectors();
-  }, [location?.district]);
-
   async function loadLocationDetails(lat: number, lng: number) {
     setLoadingLocation(true);
     try {
@@ -271,6 +272,8 @@ export default function ReportFormModal({
         province: geocodeData.province,
         district: geocodeData.district,
         sector: geocodeData.sector,
+        cell: geocodeData.cell,
+        village: geocodeData.village,
       });
       // Update address query if it's empty
       if (!addressQuery) {
@@ -451,6 +454,8 @@ export default function ReportFormModal({
             province: location.province,
             district: location.district,
             sector: location.sector,
+            cell: location.cell,
+            village: location.village,
           },
           photos
         );
@@ -485,6 +490,8 @@ export default function ReportFormModal({
         province: location.province,
         district: location.district,
         sector: location.sector,
+        cell: location.cell,
+        village: location.village,
         ...(user?.id && { reporterId: user.id }),
       });
 
@@ -572,6 +579,8 @@ export default function ReportFormModal({
               province: location.province,
               district: location.district,
               sector: location.sector,
+              cell: location.cell,
+              village: location.village,
             },
             photos
           );
@@ -632,10 +641,10 @@ export default function ReportFormModal({
               styles.modalContent,
               {
                 transform: [{ translateY: slideAnim }],
-                opacity: (typeMenuVisible || sectorMenuVisible) ? 0.3 : 1,
+                opacity: (typeMenuVisible || adminPicker.activeLevel !== null) ? 0.3 : 1,
               },
             ]}
-            pointerEvents={(typeMenuVisible || sectorMenuVisible) ? 'none' : 'auto'}
+            pointerEvents={(typeMenuVisible || adminPicker.activeLevel !== null) ? 'none' : 'auto'}
           >
           {/* Progress Indicator */}
           <View style={styles.progressContainer}>
@@ -758,7 +767,7 @@ export default function ReportFormModal({
                       </Text>
                       {(location.province || location.district) && (
                         <Text style={styles.locationDetails}>
-                          {[location.province, location.district, location.sector]
+                          {[location.province, location.district, location.sector, location.cell, location.village]
                             .filter(Boolean)
                             .join(', ')}
                         </Text>
@@ -781,52 +790,16 @@ export default function ReportFormModal({
                     </TouchableOpacity>
                   </View>
 
-                  {/* Sector Selection */}
-                  {location.district && (
-                    <View style={styles.sectorInputSection}>
-                      <View style={styles.sectorInputLabel}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={colors.textSecondary} />
-                        <Text style={styles.sectorInputLabelText}>
-                          Sector (Optional - Select or edit if geocoding is inaccurate)
-                        </Text>
-                      </View>
-                      {loadingSectors ? (
-                        <View style={styles.sectorLoadingContainer}>
-                          <ActivityIndicator size="small" color={colors.buttonPrimary} />
-                          <Text style={styles.sectorLoadingText}>Loading sectors...</Text>
-                        </View>
-                      ) : availableSectors.length > 0 ? (
-                        <TouchableOpacity
-                          style={styles.dropdownButton}
-                          onPress={() => setSectorMenuVisible(true)}
-                          activeOpacity={0.7}
-                        >
-                          {location.sector ? (
-                            <Text style={styles.dropdownSelectedText}>{location.sector}</Text>
-                          ) : (
-                            <Text style={styles.dropdownPlaceholder}>Select Sector</Text>
-                          )}
-                          <MaterialCommunityIcons
-                            name={sectorMenuVisible ? 'chevron-up' : 'chevron-down'}
-                            size={24}
-                            color={colors.textSecondary}
-                          />
-                        </TouchableOpacity>
-                      ) : (
-                        <FloatingLabelInput
-                          label="Sector"
-                          value={location.sector || ''}
-                          onChangeText={(text) => {
-                            setLocation({
-                              ...location,
-                              sector: text.trim() || undefined,
-                            });
-                          }}
-                          placeholder="Enter sector name manually"
-                        />
-                      )}
+                  {/* Administrative location */}
+                  <View style={styles.sectorInputSection}>
+                    <View style={styles.sectorInputLabel}>
+                      <MaterialCommunityIcons name="map-marker-outline" size={16} color={colors.textSecondary} />
+                      <Text style={styles.sectorInputLabelText}>
+                        Filled in from the map. Correct it if it's wrong.
+                      </Text>
                     </View>
-                  )}
+                    <AdminLocationRows picker={adminPicker} />
+                  </View>
                 </>
               ) : (
                 <TouchableOpacity
@@ -1094,73 +1067,8 @@ export default function ReportFormModal({
           </View>
         )}
 
-        {/* Sector Dropdown - Overlay outside form content */}
-        {sectorMenuVisible && (
-          <View style={styles.dropdownOverlay}>
-            <TouchableOpacity
-              style={styles.dropdownBackdrop}
-              activeOpacity={1}
-              onPress={() => setSectorMenuVisible(false)}
-            />
-            <View style={styles.dropdownModal}>
-              <View style={styles.dropdownHeader}>
-                <Text style={styles.dropdownHeaderText}>
-                  Select Sector {location?.district ? `(${location.district})` : ''}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setSectorMenuVisible(false)}
-                  style={styles.dropdownCloseButton}
-                >
-                  <MaterialCommunityIcons name="close" size={24} color={colors.textPrimary} />
-                </TouchableOpacity>
-              </View>
-              <ScrollView 
-                style={styles.dropdownList} 
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-              >
-                {availableSectors.map((sector) => (
-                  <TouchableOpacity
-                    key={sector}
-                    style={[
-                      styles.dropdownItem,
-                      location?.sector === sector && styles.dropdownItemSelected,
-                    ]}
-                    onPress={() => {
-                      setLocation({ ...location!, sector });
-                      setSectorMenuVisible(false);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <MaterialCommunityIcons
-                      name="map-marker"
-                      size={22}
-                      color={location?.sector === sector ? colors.buttonPrimary : colors.textSecondary}
-                    />
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        location?.sector === sector && {
-                          color: colors.buttonPrimary,
-                          fontWeight: '600',
-                        },
-                      ]}
-                    >
-                      {sector}
-                    </Text>
-                    {location?.sector === sector && (
-                      <MaterialCommunityIcons
-                        name="check"
-                        size={20}
-                        color={colors.buttonPrimary}
-                      />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        )}
+        {/* Administrative location picker - overlay outside form content */}
+        <AdminLocationSheet picker={adminPicker} />
       </KeyboardAvoidingView>
       </Modal>
     </>
@@ -1417,18 +1325,6 @@ const styles = StyleSheet.create({
   },
   sectorInputLabelText: {
     fontSize: 13,
-    color: colors.textSecondary,
-    fontFamily: typography.fontFamily,
-  },
-  sectorLoadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.md,
-    justifyContent: 'center',
-  },
-  sectorLoadingText: {
-    fontSize: 14,
     color: colors.textSecondary,
     fontFamily: typography.fontFamily,
   },

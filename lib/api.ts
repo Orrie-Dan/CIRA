@@ -11,6 +11,8 @@ export interface ApiReport {
   province?: string | null
   district?: string | null
   sector?: string | null
+  cell?: string | null
+  village?: string | null
   createdAt: string
 }
 
@@ -34,6 +36,8 @@ export interface CreateReportPayload {
   province?: string
   district?: string
   sector?: string
+  cell?: string
+  village?: string
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://cira-backend-1.onrender.com'
@@ -407,6 +411,8 @@ export interface AdminReport extends ApiReport {
   updatedAt: string
   district?: string | null
   sector?: string | null
+  cell?: string | null
+  village?: string | null
   province?: string | null
   photos?: Array<{
     id: string
@@ -439,6 +445,8 @@ export interface DetailedReport extends AdminReport {
   province?: string | null
   district?: string | null
   sector?: string | null
+  cell?: string | null
+  village?: string | null
   photos: Array<{
     id: string
     url: string

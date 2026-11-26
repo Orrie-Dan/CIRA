@@ -8,9 +8,11 @@ export const createReportSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   addressText: z.string().optional(),
-  province: z.string().optional(),
-  district: z.string().optional(),
-  sector: z.string().optional(),
+  province: z.string().max(100).optional(),
+  district: z.string().max(100).optional(),
+  sector: z.string().max(100).optional(),
+  cell: z.string().max(100).optional(),
+  village: z.string().max(100).optional(),
   reporterId: z.string().uuid().optional(),
 })
 

@@ -63,35 +63,3 @@ export async function reverseGeocodeRwanda(lat: number, lng: number): Promise<Ge
   return reverseGeocode(lat, lng)
 }
 
-/**
- * Get sectors by district name
- * Returns list of sectors for a given district in Rwanda
- */
-export async function getSectorsByDistrict(district: string): Promise<{ sectors: string[]; count: number; district: string }> {
-  try {
-    const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://cira-backend-1.onrender.com'
-    const url = `${API_BASE}/geocoding/sectors?district=${encodeURIComponent(district)}`
-    
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-      },
-    })
-
-    if (!response.ok) {
-      console.warn('Failed to fetch sectors:', response.status, response.statusText)
-      return { sectors: [], count: 0, district }
-    }
-
-    const data = await response.json()
-    return {
-      sectors: data.sectors || [],
-      count: data.count || 0,
-      district: data.district || district,
-    }
-  } catch (error) {
-    console.error('Error fetching sectors:', error)
-    return { sectors: [], count: 0, district }
-  }
-}
-

@@ -537,7 +537,7 @@ export function ReportDetailView({ reportId, onUpdate, onClose, userRole = 'citi
                           <div className="flex items-center gap-1.5 pt-2 border-t border-slate-700/30">
                             <MapPin className="h-3.5 w-3.5 text-blue-400" />
                             <p className="text-xs text-blue-400 font-medium">
-                              {[report.province, report.district, report.sector].filter(Boolean).join(', ')}
+                              {[report.province, report.district, report.sector, report.cell, report.village].filter(Boolean).join(', ')}
                             </p>
                           </div>
                         )}

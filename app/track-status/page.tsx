@@ -340,7 +340,7 @@ function TrackStatusForm() {
                 </p>
                 {(report.province || report.district || report.sector) && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    {[report.province, report.district, report.sector].filter(Boolean).join(', ')}
+                    {[report.province, report.district, report.sector, report.cell, report.village].filter(Boolean).join(', ')}
                   </p>
                 )}
               </div>
